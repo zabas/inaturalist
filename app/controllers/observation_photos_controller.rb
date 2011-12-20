@@ -1,5 +1,9 @@
 class ObservationPhotosController < ApplicationController
   before_filter :login_required
+
+  def ping
+    render :json => {:hellow => "world"}
+  end
   
   def create
     @observation_photo = ObservationPhoto.new(params[:observation_photo])

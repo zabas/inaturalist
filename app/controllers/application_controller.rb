@@ -4,13 +4,13 @@ class ApplicationController < ActionController::Base
   include AuthenticatedSystem
   include RoleRequirementSystem
   
-  has_mobile_fu
-  around_filter :catch_missing_mobile_templates
+  #has_mobile_fu
+  #around_filter :catch_missing_mobile_templates
   
   helper :all # include all helpers, all the time
   protect_from_forgery
   filter_parameter_logging :password, :password_confirmation
-  before_filter :login_from_cookie, :get_user, :set_time_zone
+  before_filter :login_from_cookie, :get_user#, :set_time_zone
   before_filter :return_here, :only => [:index, :show, :by_login]
   
   PER_PAGES = [10,30,50,100]

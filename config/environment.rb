@@ -69,48 +69,48 @@ Rails::Initializer.run do |config|
   # config.active_record.default_timezone = :utc
   
   # Added from the acts_as_authenticated plugin 6/3/07
-  config.active_record.observers = :user_observer, :listed_taxon_sweeper
+  # config.active_record.observers = :user_observer, :listed_taxon_sweeper
   
   # Gems
-  config.gem 'mislav-will_paginate', :lib => 'will_paginate', :source => 'http://gems.github.com'
+#  config.gem 'mislav-will_paginate', :lib => 'will_paginate', :source => 'http://gems.github.com'
   config.gem 'rubyist-aasm', :lib => 'aasm', :source => 'http://gems.github.com', :version => '2.0.2'
-  config.gem "GeoRuby", :lib => 'geo_ruby'
-  config.gem "mojombo-chronic", :lib => 'chronic', :source => 'http://gems.github.com'
-  config.gem 'bluecloth'
-  config.gem "htmlentities"
+ # config.gem "GeoRuby", :lib => 'geo_ruby'
+ # config.gem "mojombo-chronic", :lib => 'chronic', :source => 'http://gems.github.com'
+ # config.gem 'bluecloth'
+ # config.gem "htmlentities"
   config.gem "aws-s3", :lib => 'aws/s3'
   config.gem "xml-simple", :lib => 'xmlsimple'
   config.gem "mime-types", :lib => 'mime/types'
   config.gem "mocha"
   config.gem "paperclip"
-  config.gem "ambethia-smtp-tls", :lib => "smtp-tls", :source => "http://gems.github.com/"
-  config.gem "flickraw"
-  config.gem 'rest-client', :lib => 'rest_client'
+#   config.gem "ambethia-smtp-tls", :lib => "smtp-tls", :source => "http://gems.github.com/"
+#   config.gem "flickraw"
+#   config.gem 'rest-client', :lib => 'rest_client'
   config.gem 'hoptoad_notifier'
-  config.gem "carlosparamio-geoplanet", :lib => 'geoplanet', :source => "http://gems.github.com/"
-  config.gem 'geoip'
-  config.gem 'alexvollmer-daemon-spawn', :lib => 'daemon-spawn', :source => "http://gems.github.com/"
-  config.gem 'nokogiri'
-  config.gem 'objectify-xml', :lib => 'objectify_xml'
-  # As of 2010-04-21, TS doesn't work with DJ >= 2.0
-  # config.gem 'delayed_job', :version => '<= 1.8.5'
+#   config.gem "carlosparamio-geoplanet", :lib => 'geoplanet', :source => "http://gems.github.com/"
+#   config.gem 'geoip'
+#   config.gem 'alexvollmer-daemon-spawn', :lib => 'daemon-spawn', :source => "http://gems.github.com/"
+#   config.gem 'nokogiri'
+#   config.gem 'objectify-xml', :lib => 'objectify_xml'
+#   # As of 2010-04-21, TS doesn't work with DJ >= 2.0
+#   # config.gem 'delayed_job', :version => '<= 1.8.5'
   config.gem 'delayed_job'
   config.gem 'thinking-sphinx',
     :lib     => 'thinking_sphinx',
     # :version => '>= 1.3.11',
     :version => '<= 1.3.20',
     :source  => 'http://gemcutter.org'
-  config.gem 'ts-delayed-delta',
-    :lib     => 'thinking_sphinx/deltas/delayed_delta',
-    :version => '>= 1.0.0',
-    :source  => 'http://gemcutter.org'
-  config.gem 'ancestry'
-  config.gem 'machinist'
-  config.gem 'faker'
-  config.gem 'fastercsv'
-  # config.gem 'newrelic_rpm'
+#   config.gem 'ts-delayed-delta',
+#     :lib     => 'thinking_sphinx/deltas/delayed_delta',
+#     :version => '>= 1.0.0',
+#     :source  => 'http://gemcutter.org'
+#   config.gem 'ancestry'
+#   config.gem 'machinist'
+#   config.gem 'faker'
+#   config.gem 'fastercsv'
+#   # config.gem 'newrelic_rpm'
   config.gem 'delayed_paperclip'
-  config.gem "friendly_id", :version => "~> 3.2.1"
+#  config.gem "friendly_id", :version => "~> 3.2.1"
   
   # Set default time zone to UTC
   config.time_zone = 'UTC'
@@ -119,20 +119,20 @@ end
 # Windows flag, for disabling things that might not work in Windoze
 WINDOWS = false
 
-require 'geoplanet'
-require 'geoip'
-require 'net-flickr/lib/net/flickr'
-require 'catalogue_of_life'
-require 'ubio'
-require 'model_tips'
-require 'meta_service'
-require 'wikipedia_service'
-require 'batch_tools'
-require 'georuby_extra'
+# require 'geoplanet'
+# require 'geoip'
+# require 'net-flickr/lib/net/flickr'
+# require 'catalogue_of_life'
+# require 'ubio'
+# require 'model_tips'
+# require 'meta_service'
+# require 'wikipedia_service'
+# require 'batch_tools'
+# require 'georuby_extra'
 
-# GeoIP setup, for IP geocoding
-geoip_config = YAML.load(File.open("#{RAILS_ROOT}/config/geoip.yml"))
-GEOIP = GeoIP.new(geoip_config[RAILS_ENV]['city'])
+# # GeoIP setup, for IP geocoding
+# geoip_config = YAML.load(File.open("#{RAILS_ROOT}/config/geoip.yml"))
+# GEOIP = GeoIP.new(geoip_config[RAILS_ENV]['city'])
 
 
 ### API KEYS ###
@@ -140,16 +140,16 @@ UBIO_KEY = INAT_CONFIG['ubio']['UBIO_KEY']
 
 # Yahoo Developer Network
 YDN_APP_ID = INAT_CONFIG['yahoo_dev_network']['YDN_APP_ID']
-GeoPlanet.appid = YDN_APP_ID
+#GeoPlanet.appid = YDN_APP_ID
 
 
-# Google Analytics configs
-# See http://www.rubaidh.com/projects/google-analytics-plugin/
-Rubaidh::GoogleAnalytics.tracker_id   = INAT_CONFIG['google_analytics']['tracker_id']
-Rubaidh::GoogleAnalytics.domain_name  = INAT_CONFIG['google_analytics']['domain_name']
-Rubaidh::GoogleAnalytics.environments = ['production']
+# # Google Analytics configs
+# # See http://www.rubaidh.com/projects/google-analytics-plugin/
+# Rubaidh::GoogleAnalytics.tracker_id   = INAT_CONFIG['google_analytics']['tracker_id']
+# Rubaidh::GoogleAnalytics.domain_name  = INAT_CONFIG['google_analytics']['domain_name']
+# Rubaidh::GoogleAnalytics.environments = ['production']
 
 # General settings
 SITE_NAME = INAT_CONFIG['general']['SITE_NAME']
 OBSERVATIONS_TILE_SERVER = INAT_CONFIG['tile_servers']['observations']
-SPHERICAL_MERCATOR = SphericalMercator.new
+#SPHERICAL_MERCATOR = SphericalMercator.new

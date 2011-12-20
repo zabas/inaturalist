@@ -1,9 +1,7 @@
 class Photo < ActiveRecord::Base
   belongs_to :user
   has_many :observation_photos, :dependent => :destroy
-  has_many :taxon_photos, :dependent => :destroy
   has_many :observations, :through => :observation_photos
-  has_many :taxa, :through => :taxon_photos
   
   attr_accessor :api_response
   cattr_accessor :descendent_classes
