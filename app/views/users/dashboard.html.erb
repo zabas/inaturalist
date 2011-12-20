@@ -1,0 +1,397 @@
+<% content_for(:title) do -%>
+  Your Home
+<% end -%>
+<% content_for(:extracss) do -%>
+  <%= stylesheet_link_tag 'observations', 'identifications', "lists", 'lists/show_listed_taxa', 'account/index' %>
+  <style type="text/css" media="screen">
+    .comment {
+      margin: 0;
+      padding: 5px 10px;
+    }
+    .comment p:last-child {
+      margin-bottom: 0;
+    }
+    .comment .meta {
+      float: none;
+      width: auto;
+      margin: 0;
+    }
+    
+    .comment .body {
+      padding: 0;
+    }
+    
+    .item {
+      margin-top: 10px;
+    }
+    
+    h4 .togglelink{
+      margin-left: -16px;
+    }
+    
+    .update {
+      border-bottom: 1px solid #eee;
+      margin-bottom: 10px;
+      padding-left: 30px;
+    }
+    
+    .update_body {
+      margin-bottom: 10px;
+    }
+    
+    .update .observations.mini .observation {
+      border: 0 transparent;
+    }
+    
+    .update h5 {
+      font-weight: normal;
+      margin-left: -30px;
+      font-size: 120%;
+      color: #999;
+    }
+    
+    .update h5 .usericon {
+      width: 25px;
+      margin-right: 3px;
+      vertical-align: middle;
+    }
+    
+    #updates h4.date {
+      border-bottom: 1px dotted #aaa;
+      padding-bottom: 5px;
+      margin-bottom: 10px;
+    }
+    
+    .observationcol { width: 260px; }
+    .identificationcol { width: 290px; }
+    .identification .identification_body {
+      float: left;
+      width: 180px;
+    }
+    .identification {
+      padding: 10px;
+      background-color: #eee;
+    }
+    
+    .listed_taxon .actions {
+      display: none;
+    }
+    
+    .update .comment,
+    .update .listed_taxon {
+      padding-left: 0;
+    }
+    
+    .update .update_toggle {
+      visibility: hidden;
+      color: #999;
+    }
+    
+    .update .update_toggle:hover {
+      color: #333;
+    }
+    
+    .update:hover .update_toggle {
+      visibility: visible;
+    }
+    
+    .activitybatch .icon {
+      display: inline-block;
+      width: 75px;
+      text-align: center;
+      vertical-align: middle;
+      margin: 0 0 5px 5px;
+    }
+    
+    .activitybatch .icon .small {
+      line-height: 1.2;
+    }
+    
+    .activitybatch img {
+      vertical-align: middle;
+      margin: 0 0 5px 5px;
+      display: inline-block;
+    }
+    
+    #recent_comments .mini.observation .place_guess { display: none; }
+    #rightcol .mini.observation img { 
+      float: left;
+      max-width: 40px;
+    }
+    #id_please .mini.observation { margin-bottom: 10px; }
+  </style>
+<% end -%>
+
+<%- content_for(:extrajs) do -%>
+  <%= javascript_include_tag 'jquery/plugins/jqModal', 'modal_image' %>
+  <script type="text/javascript" charset="utf-8">
+    $(document).ready(function() {
+      $('#modal_image_box').jqmAddTrigger('a.modal_image_link');
+    });
+  </script>
+<%- end -%>
+
+<% if @announcement -%>
+  <div class="column span-24">
+    <%= @announcement.body %>
+  </div>
+<% end -%>
+
+<div id="pageheader">
+  <h2>Welcome, <%= @user.login %>!</h2>
+  <%= render :partial => 'users/subnav', :locals => { :user => current_user } %>
+</div>
+
+<div id="updates" class="column span-15 append-1">
+  <% unless @updates.blank? -%>
+    <span class="small ui right description">
+      <%= link_to_function "collapse days", 
+        "$('#updates .datetoggle').removeClass('open');" +
+        "$('#updates .datetoggle').each(function() {" +
+          "$($(this).attr('rel')).hide()" +
+        "});" +
+        "$(this).hide();" +
+        "$(this).next().show()" %>
+      <%= link_to_function "expand days", 
+        "$('#updates .datetoggle').addClass('open');" +
+        "$('#updates .datetoggle').each(function() {" +
+          "$($(this).attr('rel')).show()" +
+        "});" +
+        "$(this).hide();" +
+        "$(this).prev().show()",
+        :style => "display: none" %> |
+      <%= link_to_function "collapse updates", 
+        "$('#updates .update_body').hide();" +
+        "$(this).hide();" +
+        "$(this).next().show();" +
+        "$('.collapselink').hide();" +
+        "$('.expandlink').show()" %>
+      <%= link_to_function "expand updates", 
+        "$('#updates .update_body').show();" +
+        "$(this).hide();" +
+        "$(this).prev().show();" +
+        "$('.collapselink').show();" +
+        "$('.expandlink').hide()",
+        :style => "display: none" %>
+    </span>
+  <% end -%>
+  <h3>Recent Updates</h3>
+  
+  <% if @updates.blank? -%>
+    <% if params[:page].blank? -%>
+      <p>
+        <% if current_user.friendships.count == 0 -%>
+          Your dashboard helps you keep track of what people are doing on iNat.
+          To follow someone's updates, click the <strong>"Follow [name]"</strong>
+          link in the header when viewing their observations or profile.
+          <%= link_to "Find some people to follow", people_path, :class => "readmore" %>
+        <% else %>
+          None of the people you follow have made any updates yet!
+        <% end -%>
+      </p>
+      
+      <p>Here are some things you can do in the meantime:</p>
+      <ul class="readable leafylist">
+        <% unless @user.flickr_identity %>
+          <li><%= link_to 'Link your Flickr Account to iNaturalist', :controller => 'flickr', :action => 'link' %></li>
+        <% end %>
+        <li><%= link_to "Browse your observations", observations_by_login_path(@user.login) %></li>
+        <li><%= link_to "Add new observations", :controller => 'observations', :action => 'new' %></li>
+        <li><%= link_to "Explore everyone's observations", observations_path %></li>
+        <li><%= link_to "Check out your Life List", lists_by_login_path(@user.login) %></li>
+      </ul>
+    <% else %>
+      <p class="description">
+        No more updates!
+      </p>
+    <% end -%>
+  
+  <% else %>
+  
+    <% for day, updates in @updates.group_by{|u| u.created_at.to_date} %>
+      <h4 class="date description">
+        <%= link_to_toggle (day.today? ? "Today" : day.to_s(:long)), "#updates_#{day.to_time.to_i}",
+          :class => "open datetoggle" %>
+        <small>(<span class="count"><%= updates.size %></span> <%= updates.size == 1 ? "update" : "updates" %>)</small>
+      </h4>
+      <div id="updates_<%= day.to_time.to_i %>">
+        <% updates.each do |update| %>
+          <%- 
+            activity_object = @activity_objects_by_update_id[update.id].first || update.activity_object
+            next unless activity_object
+          -%>
+          <div id="<%= dom_id update %>" class="update clear">
+            <%= link_to_function "collapse",
+              "$('##{dom_id update, 'body'}').hide(); $(this).hide(); $(this).next().show()",
+              :class => "right update_toggle collapselink" %>
+            <%= link_to_function "expand",
+              "$('##{dom_id update, 'body'}').show(); $(this).hide(); $(this).prev().show()",
+              :style => "display: none",
+              :class => "right update_toggle expandlink" %>
+              <h5>
+                <%= link_to image_tag(update.user.icon.url(:thumb), :class => 'usericon'),
+                  person_path(update.user) %>
+                <%= link_to update.user.login, person_path(update.user) %> added
+                <% if update.batch_ids.blank? -%>
+                  <%- case update.activity_object_type -%>
+                  <%- when "Post" -%>
+                    a <%= link_to "journal post", post_path(update.user.login, activity_object) %>
+                  <%- when "Comment" %>
+                    a <%= link_to "comment", activity_object %>
+                    on
+                    <%= activity_object.parent_type.match(/^[aeiou]/i) ? 'an' : 'a' %>
+                    <%= link_to activity_object.parent_type.underscore.humanize.downcase, activity_object %>
+                    <% if activity_object.parent.user -%>
+                      by
+                      <%= link_to image_tag(activity_object.parent.user.icon.url(:thumb), :class => 'usericon'),
+                        person_path(activity_object.parent.user) %>
+                      <%= link_to activity_object.parent.user.login, activity_object.parent.user %>
+                    <% end -%>
+                  <%- when "ListedTaxon" -%>
+                    a taxon to
+                    <%= link_to activity_object.list.title, activity_object %>
+                  <%- when "List" -%>
+                    a new list called
+                    <%= link_to activity_object.title, activity_object %>
+                  <%- else -%>
+                    <%= update.activity_object_type.match(/^[aeiou]/i) ? 'an' : 'a' %>
+                    <%= link_to update.activity_object_type.underscore.humanize.downcase, activity_object %>
+                  <%- end -%>
+                <% else %>
+                  <%= pluralize update.batch_ids.split(',').size, update.activity_object_type.underscore.humanize.downcase %>
+                <% end -%>
+                at <%= update.updated_at.strftime("%I:%S %p").downcase.gsub(/^0/, '') %>
+              </h5>
+            
+            <div id="<%= dom_id update, 'body' %>" class="clear update_body">
+              <% if update.batch_ids.blank? -%>
+                <%- case update.activity_object_type -%>
+                <%- when "Observation" -%>
+                  <div class="mini observations">
+                    <%= render :partial => "observations/cached_component", :object => activity_object %>
+                  </div>
+                <%- when "Identification" -%>
+                  <%= render :partial => "identifications/identification_with_observation", :object => activity_object %>
+                <%- when "ListedTaxon" -%>
+                  <div class="listed_taxa plain_view">
+                    <%= render :partial => "lists/listed_taxon", :object => activity_object %>
+                  </div>
+                <%- when "Post" %>
+                  <%= render :partial => "posts/post", :object => activity_object, 
+                    :locals => { :truncate_length => 200 } %>
+                <%- when "List" %>
+                <%- else -%>
+                  <%= render update.activity_object %>
+                <%- end -%>
+              <% elsif batch_partial = activity_object.class.activity_stream_options[:batch_partial] %>
+                <%= render :partial => batch_partial, :locals => { 
+                  :update => update,
+                  activity_object.class.to_s.underscore.pluralize.to_sym => @activity_objects_by_update_id[update.id]
+                } %>
+              <% end -%>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    <% end %>
+    
+    <%= will_paginate @updates %>
+  <% end %>
+</div>
+<div id="rightcol" class="last column span-8">
+  <% unless @id_please_observations.blank? -%>
+    <div id="id_please" class="box">
+      <h3>ID Please</h3>
+      <p class="description">Can you help your friends ID these?</p>
+      
+      <%= render :partial => "observations/mini", :collection => @id_please_observations[0..2] %>
+      
+      <% if @id_please_observations.size > 3 -%>
+        <%= link_to_toggle "More..", "#more_id_please" %>
+        <div id="more_id_please" style="display: none">
+          <%= render :partial => "observations/mini", :collection => @id_please_observations[3..-1] %>
+          <%= link_to "ID more in ID Please", id_please_path, :class => "readmore" %>
+        </div>
+      <% else %>
+        <%= link_to "ID more in ID Please", id_please_path, :class => "readmore" %>
+      <% end -%>
+    </div>
+  <% end -%>
+  
+  <div id="recent_comments">
+    <h3>
+      Recent Comments on Your Stuff<br/>
+      <span class="description">in the past week</span>
+    </h3>
+
+    <% if @recently_commented.empty? %>
+    <div class="centered description">
+      No activity in the past week.  Time to <%= link_to "post some new stuff", new_observation_path %>!
+    </div>
+    <% end %>
+
+    <% for item in @recently_commented %>
+    <div class="item clear">
+      <% if item.is_a? Observation %>
+        <%= render :partial => 'observations/mini',
+                   :locals => { :observation => item, :include_description => false } %>
+      <% else %>
+        <%= item %>
+      <% end %>
+    </div>
+      <%# for comment in item.comments.all.sort_by { |c| c.created_at } %>
+      <% for comment in item.comments %>
+        <div class="<% if comment.user == @user %>yours<% end %>">
+          <%= render :partial => "comments/comment", 
+                     :locals => { :comment => comment }%>
+        </div>
+      <% end %>
+    <% end %>
+
+    <br/>
+    <hr/>
+    
+    <h3>
+      Comments You've Made (w/ Others)<br/>
+      <span class="description">in the past week</span>
+    </h3>
+
+    <% if @commented_on.empty? %>
+    <div class="centered description">
+      You haven't left any comments recently.  Go leave someone a note!
+    </div>
+    <% end %>
+
+    <% for item in @commented_on %>
+    <div class="item">
+      <% if item.is_a? Observation %>
+        <%= render :partial => 'observations/mini',
+                   :locals => { :observation => item, :include_description => false } %>
+      <% else %>
+        <%= item %>
+      <% end %>
+    </div>
+      <%# sorted_comments = item.comments.all.sort_by { |c| c.created_at } %>
+      <% sorted_comments = item.comments %>
+      <% your_first = sorted_comments.select {|c| c.user == @user }.first %>
+      <% for comment in sorted_comments[sorted_comments.index(your_first)..-1] %>
+        <div class="<% if comment.user == @user %>yours<% end %>">
+          <%= render :partial => "comments/comment", 
+                     :locals => { :comment => comment }%>
+        </div>
+      <% end %>
+    <% end %>
+  	
+  </div>
+  
+  <br/>
+  <hr/>
+  
+  <h3>Extras</h3>
+  
+  <h4><%= link_to "Blog Widget", :controller => "observations", :action => "widget" %></h4>
+  <p class="description">
+    Show off your recent observations on your own blog or website!
+    <%= link_to "Get started &raquo;", :controller => "observations", :action => "widget" %>
+  </p>
+</div>

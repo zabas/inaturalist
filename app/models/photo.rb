@@ -5,9 +5,21 @@ class Photo < ActiveRecord::Base
   
   attr_accessor :api_response
   cattr_accessor :descendent_classes
+  cattr_accessor :remote_descendent_classes
   
   COPYRIGHT = 0
-  NO_COPYRIGHT = 8
+  NO_COPYRIGHT = 7
+  
+  LICENSE_INFO = {
+    0 => {:short => "(c)", :name => "Copyright", :url => "http://en.wikipedia.org/wiki/Copyright"},
+    1 => {:short => "CC BY-NC-SA", :name => "Attribution-NonCommercial-ShareAlike License", :url => "http://creativecommons.org/licenses/by-nc-sa/2.0/"},
+    2 => {:short => "CC BY-NC", :name => "Attribution-NonCommercial License", :url => "http://creativecommons.org/licenses/by-nc/2.0/"},
+    3 => {:short => "CC BY-NC-ND", :name => "Attribution-NonCommercial-NoDerivs License", :url => "http://creativecommons.org/licenses/by-nc-nd/2.0/"},
+    4 => {:short => "CC BY", :name => "Attribution License", :url => "http://creativecommons.org/licenses/by/2.0/"},
+    5 => {:short => "CC BY-SA", :name => "Attribution-ShareAlike License", :url => "http://creativecommons.org/licenses/by-sa/2.0/"},
+    6 => {:short => "CC BY-ND", :name => "Attribution-NoDerivs License", :url => "http://creativecommons.org/licenses/by-nd/2.0/"},
+    7 => {:short => "PD", :name => "Public domain, no known copyright restrictions", :url => "http://flickr.com/commons/usage/"}
+  }
   
   def validate
     if user.blank? && self.license == 0
@@ -33,26 +45,51 @@ class Photo < ActiveRecord::Base
   
   # Return a string with attribution info about this photo
   def attribution
-    rights = case self.license
-    when COPYRIGHT, nil
-      '(c)'
-    when NO_COPYRIGHT
-      '(o)'
-    else
-      '(cc)'
-    end
-    
-    name = if !self.native_realname.blank?
-      self.native_realname
-    elsif !self.native_username.blank?
-      self.native_username
-    elsif !self.observations.empty?
-      self.observations.first.user.login
+    name = if !native_realname.blank?
+      native_realname
+    elsif !native_username.blank?
+      native_username
+    elsif (o = observations.first)
+      o.user.login
     else
       "anonymous Flickr user"
     end
-
-    "#{rights} #{name}"
+    "#{license_short} #{name}"
+  end
+  
+  def license_short
+    LICENSE_INFO[license.to_i].try(:[], :short)
+  end
+  
+  def license_name
+    LICENSE_INFO[license.to_i].try(:[], :name)
+  end
+  
+  def copyrighted?
+    license.to_i == COPYRIGHT
+  end
+  
+  def creative_commons?
+    license.to_i > COPYRIGHT && license.to_i < NO_COPYRIGHT
+  end
+  
+  # Try to choose a single taxon for this photo.  Only works if class has 
+  # implemented to_taxa
+  def to_taxon
+    photo_taxa_from_scinames = try(:to_taxa, :lexicon => TaxonName::SCIENTIFIC_NAMES)
+    unless photo_taxa_from_scinames.blank?
+      unless photo_taxa_from_scinames.detect{|t| t.rank_level.blank?}
+        photo_taxa_from_scinames = photo_taxa_from_scinames.sort_by(&:rank_level)
+      end
+      return photo_taxa_from_scinames.detect(&:species_or_lower?) || photo_taxa_from_scinames.first
+    end
+    
+    photo_taxa = try(:to_taxa)
+    return nil if photo_taxa.blank?
+    unless photo_taxa.detect{|t| t.rank_level.blank?}
+      photo_taxa = photo_taxa.sort_by(&:rank_level)
+    end
+    photo_taxa.detect(&:species_or_lower?) || photo_taxa.first
   end
   
   # Sync photo object with its native source.  Implemented by descendents

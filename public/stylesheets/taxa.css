@@ -18,16 +18,28 @@ table.taxa .taxon_name {
 
 .taxa.grid .taxon .image,
 .taxa.grid .taxon .image a {
-  display: block;
   text-align: center;
-  background-color: #f1f1f1;
-  min-height: 100px;
+  background-color: white;
 }
-
-.taxa.grid .taxon .image .iconic { margin: 30px; }
+.taxa.grid .taxon .image.nophoto,
+.taxa.grid .taxon .image.nophoto a {
+  background-color: #f1f1f1;
+}
+.taxa.grid .taxon .image .iconic { margin: 30px 0; }
 .taxa.grid .first { clear: left; }
 .taxa.grid .last { margin-right: 0; }
 .taxa.grid .infolink { display: none; }
+
+.taxa.grid .taxonimage { width: 100px; }
+
+/* big grid */
+.taxa.big.grid .taxon { width: 310px; }
+.taxa.big.grid .taxon img { max-width: 310px; }
+
+/* small grid */
+.taxa.medium.grid .taxon img { max-width: 240px; }
+
+/* list */
 
 .taxa.list .taxon_list_taxon { margin-bottom: 10px; }
 .taxa.list .taxonimage {
@@ -48,6 +60,22 @@ table.taxa .taxon_name {
 }
 .taxa.list .info { display: none; }
 
+.taxa.guide .info { display: block; }
+
 .amphibiaweb table,
 .amphibiaweb tr,
 .amphibiaweb td { vertical-align: top; }
+
+.taxonimage { position: relative; }
+.taxonimage .attribution {
+  position: absolute; 
+  right: 5px; 
+  bottom: 5px;
+  color: white;
+  opacity: 0.5;
+  font-size: smaller;
+  border-radius: 10px;
+  padding: 0 5px;
+}
+.taxonimage:hover .attribution { opacity: 1; background-color: #111; }
+

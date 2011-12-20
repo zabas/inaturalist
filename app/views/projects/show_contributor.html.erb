@@ -1,0 +1,51 @@
+<%- content_for(:title) do -%>
+  <%=h @project.title %>
+<%- end -%>
+
+<%- content_for(:extracss) do -%>
+  <%= stylesheet_link_tag 'observations', 'observations/by_login', 'observations/filters' %>
+<% end %>
+
+<div id="pageheader" class="clear">
+  <div class="breadcrumbs">
+    <strong><%= link_to "&laquo #{h @project.title}", @project, :class => 'crumb' %></strong>
+  </div><!-- /#breadcrumbs -->
+  <h2>
+    Contributions from <%= link_to h(@contributor.user.login), observations_by_login_path(@contributor.user.login) %> to
+    <% if @project.icon.file? -%>
+      <%= image_tag @project.icon.url(:span1), :style => "vertical-align: middle" %>
+    <% end -%>
+    <%=h truncate @project.title, :length => 55 %>
+  </h2>
+</div>  
+  
+<div class="column span-17 append-1">
+  <div id="observations">
+    <h3>
+      Observations
+    </h3>
+    <% if @project_observations.blank? -%>
+      <div class="description noresults">
+        <%= link_to h(@contributor.user.login), observations_by_login_path(@contributor.user.login) %> 
+        hasn't contributed any observations to this project.
+      </div>
+    <% else %>
+      <div class="mini observations">
+        <%= render :partial => "observations/cached_component", :collection => @project_observations.map(&:observation).compact %>
+      </div>
+     <%= will_paginate @project_observations, :renderer => INatLinkRenderer %>
+    <% end -%>
+  </div>
+</div>
+
+<div class="last column span-6">
+  <h3>Stats</h3>
+  <ul class="meta">
+    <li>
+      <span class="count"><%= @contributor.taxa_count %></span> taxa observed</span>
+    </li>
+    <li>
+      <span class="count"><%= @contributor.observations_count %></span> total observations</span>
+    </li>
+  </ul>
+</div>

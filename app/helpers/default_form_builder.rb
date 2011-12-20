@@ -7,8 +7,21 @@ class DefaultFormBuilder < ActionView::Helpers::FormBuilder
   
   helpers.each do |name|
     define_method(name) do |field, *args|
-      options = args.last.is_a?(Hash) ? args.pop : {}
-      content = super
+      options = if args[-2].is_a?(Hash)
+        args.pop
+      elsif args.last.is_a?(Hash)
+        args.last
+      else
+        {}
+      end
+      if %w(text_field file_field).include?(name.to_s)
+        css_class = options[:class] || []
+        css_class = [css_class, 'text'].flatten.uniq.join(' ') if name.to_s == "text_field"
+        css_class = [css_class, 'file'].flatten.uniq.join(' ') if name.to_s == "file_field"
+        args << {} unless args.last.is_a?(Hash)
+        args.last[:class] = css_class
+      end
+      content = super(field, *args)
       form_field(field, content, options)
     end
   end
@@ -18,20 +31,25 @@ class DefaultFormBuilder < ActionView::Helpers::FormBuilder
     options ||= {}
     wrapper_options = options.delete(:wrapper) || {}
     wrapper_options[:class] = "#{wrapper_options[:class]} field #{field}_field".strip
+    content, label_content = '', ''
     
     if options[:label] != false
       label_tag = label(field, options[:label], :class => options[:label_class])
       if options[:required]
         label_tag += content_tag(:span, " *", :class => 'required')
       end
-      content = content_tag(:div, label_tag, :class => 'label')
+      label_content = content_tag(options[:label_after] ? :span : :div, label_tag, :class => "label")
     end
     
-    if options[:description]
-      content += content_tag(:div, options[:description], :class => "description")
-    end
     
+    description = content_tag(:div, options[:description], :class => "description") if options[:description]
     content = "#{content}#{block_given? ? @template.capture(&block) : field_content}"
+    
+    content = if options[:label_after]
+      "#{content} #{label_content} #{description}"
+    else
+      "#{label_content} #{description} #{content}"
+    end
     
     if block_given?
       @template.concat @template.content_tag(:div, content, wrapper_options)

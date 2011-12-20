@@ -109,8 +109,7 @@
         // If the taxon_id input has an alt set, use that as the matched 
         // status.  Otherwise, look it up.
         if ($(taxon_id).attr('alt') != '') {
-          $.fn.simpleTaxonSelector.setStatus(wrapper, 'matched', 
-            $(taxon_id).attr('alt'));
+          $.fn.simpleTaxonSelector.setStatus(wrapper, 'matched', $(taxon_id).attr('alt'));
         } else {
           $.fn.simpleTaxonSelector.setStatus(wrapper, 'loading', 'Loading...');
           jQuery.getJSON('/taxa/'+$(taxon_id).val()+'.json', function(taxon) {
@@ -288,11 +287,13 @@
     // Set the image
     $(image).attr('src', '/images/iconic_taxa/unknown-32px.png')
     
+    $(wrapper).data('taxon', null)
+    
     // Fire afterUnselect callback
     if (typeof(options.afterUnselect) == 'function') {
       options.afterUnselect(wrapper, name, options);
-    };
-  };
+    }
+  }
   
   $.fn.simpleTaxonSelector.selectTaxon = function(wrapper, taxon, options) {
     var options = $.extend({}, $(wrapper).data('simpleTaxonSelectorOptions'), options);
@@ -330,7 +331,10 @@
     // Update the image
     if (typeof(taxon.image_url) != 'undefined') {
       $(wrapper).find('.simpleTaxonSelectorImage').attr('src', taxon.image_url);
-    };
+    }
+    
+    $(wrapper).data('taxon', taxon)
+    
     
     // Fire afterSelect callback
     if (typeof(options.afterSelect) == 'function') {

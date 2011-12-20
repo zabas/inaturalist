@@ -1,0 +1,21 @@
+<div class='photoSelectorAlbums facebookAlbums'>
+  <% if @reauthorization_needed -%>
+    <p class="notice ui">
+      Facebook would like to confirm that you want your account connected to iNat.
+      <%= link_to "Confirm now", ProviderAuthorization::AUTH_URLS['facebook'], :class => "readmore" %>
+    </p>
+  <% elsif @albums.empty? %>
+    <p class="meta ui">We can't find any photos from Facebook.</p>
+  <% else %>
+    <label>Select an album</label>
+    <table>
+    <% @albums.each do |album| %>
+      <tr class='album' data-aid='<%= album['aid'] %>'>
+        <td><%= image_tag(album['cover_photo_src']) %></td>
+        <td><%= album['name'] %></td>
+      </tr>
+    <% end %>
+    </table>
+  <% end %>
+</div>
+

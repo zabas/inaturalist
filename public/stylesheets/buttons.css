@@ -1,12 +1,14 @@
 /* Overrides to the Blueprint button plugin */
 a.button,
 .button, 
-input[type='button'],
-button {
+input[type='button'].button,
+button.button {
 /*  Lifted from Blueprint plugin, which doesn't support <input type="button">*/
   display:block;
   float:left;
   margin:0 0.583em 0.667em 0;
+  
+  vertical-align: top;
   
 /*  Blueprint overrides*/
   padding: 7px 10px 7px 7px;
@@ -23,8 +25,6 @@ button {
   background-color: white;
 }
 
-input[type='button']:hover,
-input[type='submit']:hover,
 input.button:hover {
   background-color:#dff4ff;
   border:1px solid #c2e1ef;
@@ -127,7 +127,8 @@ button.default {
   border-color: #999;
   border: 0 none;
 }
-
+.button.disabled { opacity: 0.5; cursor: default;}
+.button.disabled:hover { opacity: 0.5; }
 
 .okcancel.buttons {
   clear: both;
@@ -177,7 +178,9 @@ input[type='submit'].link:hover {
   padding: 0;
 }
 
-.button.pale {
+.button.pale,
+.button.pale.disabled:hover {
+  border-color: #dedede;
   background-color: #dedede;
   color: white;
   text-align: center;
@@ -190,7 +193,8 @@ input[type='submit'].link:hover {
   color: white;
 }
 
-.button.glaucous {
+.button.glaucous,
+.button.glaucous.disabled:hover {
   background-color: #aaa;
   border-color: #aaa;
   color: white;
@@ -221,9 +225,15 @@ input[type='submit'].link:hover {
 .buttonrow.smallbuttons .button,
 .buttonrow.smallbuttons input.text,
 .buttonrow.smallbuttons label {
-  padding: 2px 3px;
+  padding: 1px 3px;
   font-size: 100%;
   margin-bottom: 0;
+}
+
+@-moz-document url-prefix() {
+  .buttonrow.smallbuttons input.button {
+    padding: 0px 3px;
+  }
 }
 
 .buttonrow.smallbuttons .button,
@@ -233,7 +243,14 @@ input[type='submit'].link:hover {
 .buttonrow.smallbuttons input[type='submit']:hover,
 .buttonrow.smallbuttons input[type='button']:active,
 .buttonrow.smallbuttons input[type='submit']:active {
-  border: 0 transparent;
   font-weight: normal;
 }
+
+.buttonrow.inline form.last,
+.buttonrow.inline .button.last { margin-right: 0; }
+
+@-moz-document url-prefix() {
+  input.button { padding: 6px 6px 7px 6px;}
+}
+
 .button.last { margin-right: 0; }

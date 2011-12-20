@@ -3,55 +3,40 @@
  * Styles for visualizing individual observations.  Most assume a container of 
  * the class .observations and children of the class .observation.
  */
-
-.observations h4 {
-  display: none;
-  margin: 0;
-}
-
-.observations .details h4 {
-  display: block;
-}
-
-.observation .description.attribute {
-  color: #333;
-}
-
-.observation div.description p {
-  font-style: italic;
-}
-
+.observations h4{display:none;margin:0;}
+.observations .details h4{display:block;}
+.observation .description.attribute{color:#333;}
+.observation div.description p{font-style:italic;}
 .observation .description.attribute img,
-.observation .details.attribute img {
-  max-width: 400px;
-  height: auto;
-}
-
-.observation .actions ul {
-  display: inline;
-  list-style: none;
-  margin: 0;
-  white-space: nowrap;
-}
-
-.observation .actions ul li {
-  display: inline;
-}
-
-.observation .actions ul li:after {
-  content: ' | ';
-  color: #888;
-}
-
-.observation .actions ul li.last:after {
-  content: '';
-}
+.observation .details.attribute img{max-width:400px;height:auto;}
+.observation .actions ul{display:inline;list-style:none;margin:0;}
+.observation .actions ul li{display:inline;white-space:nowrap;}
+.observation .actions ul li:after{content:' | ';color:#888;}
+.observation .actions ul li.last:after{content:'';}
 
 /* Table */
 .observations.table {
   display: table;
   width: 100%;
 }
+.observations.table .project_observation {
+  display: table-row-group;
+}
+.observations.table .project_observation .icon.attribute {
+  padding-bottom: 50px;
+}
+.observations.table .project_observation_extra {
+  display: block;
+  position:relative;
+}
+.observations.table .attribute.curator_ident {
+  display: block;
+  bottom: 10px;
+  left: 130px;
+  position: absolute;
+}
+.observations.table .attribute.curator_ident h4 { display: inline; font-family: "Trebuchet MS",Arial,sans-serif; font-size: 100%; font-weight: bold; color: #888;}
+
 
 .observations.table .headerrow {
   display: table-header-group;
@@ -137,8 +122,7 @@
   font-style: italic;
 }
 
-.observations.table .actions ul,
-.observations.table .identifications_count {
+.observations.table .actions ul {
   display: block;
 }
 
@@ -169,17 +153,13 @@
 .observations.mini .place,
 .observations.mini .user,
 .observations.mini .actions,
-.observations.mini .details {
+.observations.mini .details,
+.observations.mini .curator_ident {
   padding-left: 30px;
 }
 
-.observations.mini .icon {
-  position: absolute;
-}
-
-.observations.mini .photos.attribute {
-  max-width: 80px;
-}
+.observations.mini .icon{position:absolute;}
+.observations.mini .photos.attribute{max-width:80px;}
 
 .observations.mini .photos .photolist .photo.nophoto {
   border: 1px dashed #eee;
@@ -200,7 +180,8 @@
 .observations.mini .user .label,
 .observations.mini .observed_on .label,
 .observations.mini .created_at .label,
-.observations.mini .place .label {
+.observations.mini .place .label,
+.observations.mini .curator_ident .label {
   display: block;
   width: 50px;
   position: absolute;
@@ -211,6 +192,14 @@
   font-family: "Trebuchet MS",Arial,sans-serif;
   line-height: 1.5;
 }
+.observations.mini .curator_ident .label {
+  display: inline;
+  width: auto;
+  position: static;
+  font-weight: bold;
+}
+
+.observations.mini .curator_ident .label:after { content: ': ';}
 
 .observations.mini .species_guess {
   line-height: 1.2;
@@ -221,6 +210,8 @@
   float: right;
   margin-left: 4px;
 }
+.observations.mini .photos img { width: 75px; }
+.observations.table .photos img { width: 75px; }
 
 /* Compact Mini */
 .observations.mini.compact .observation .othernames,
@@ -242,14 +233,12 @@
   display: inline;
   position: static;
 }
+.observations.mini.compact .observation .label:after { content: ': '; }
+.observations.mini.compact .observation .photo:first-child { display: block !important; }
+.observations.mini .editlink { display: none ;}
 
-.observations.mini.compact .observation .label:after {
-  content: ': ';
-}
-
-.observations.mini.compact .observation .photo:first-child {
-  display: block !important;
-}
+.observations.mini.compact .actions,
+.observations.mini.infowindow .actions { margin-top: 5px;}
 
 /* Infowindow */
 .observations.infowindow {
@@ -279,8 +268,18 @@
   height: auto;
 }
 
-.observations.infowindow .observation .attribute.icon {
-/*  display: inherit !important;*/
+.observations.mini.compact.infowindow .observation .user,
+.observations.mini.compact.infowindow .observation .observed_on,
+.observations.mini.compact.infowindow .observation .created_at,
+.observations.mini.compact.infowindow .observation .details,
+.observations.mini.compact.infowindow .observation .actions {
+  padding-left: 0px;
+}
+
+.observations.mini.compact.infowindow p {
+  margin-bottom: 0.8em;
+  line-height: 1.4;
+  font-size: 120%;
 }
 
 .observations.infowindow .observation .attribute.control {
@@ -485,6 +484,8 @@
   position: relative;
 }
 
+.observationform .place_guess_field { margin-bottom: 5px;}
+
 .observationform .field .id_please {
   position: absolute;
   top: 0;
@@ -520,33 +521,14 @@
   width: 7.8em;
 }
 
-.observationform .latlonfields.status label:after {
-  content: ':';
-}
+.observationform .latlonfields.status label:after{content:':';}
+.observationform select{width:auto;}
+.observationform .observed_on_string{margin-bottom:0.2em;}
+.observationform .time_zone{color:#888;}
+a.kmllink{background-image:url(/images/google_earth.png);}
+a.csvlink{background-image:url(/images/silk/table.png);}
+#batchformcol{margin-bottom:1em;}
 
-.observationform select {
-  width: auto;
-}
-
-.observationform .observed_on_string {
-  margin-bottom: 0.2em;
-}
-
-.observationform .time_zone {
-  color: #888;
-}
-
-a#kmllink {
-  background-image: url(/images/google_earth.png);
-}
-
-a#csvlink {
-  background-image: url(/images/silk/table.png);
-}
-
-#batchformcol {
-  margin-bottom: 1em;
-}
 
 #batchformcol h3 a {
   color: black;
@@ -578,19 +560,11 @@ a#csvlink {
   padding: 1.5em 0 1em;
 }
 
-.batchcontrols .button {
-  float: none;
-  display: inline;
-}
+.batchcontrols .button{float:none;display:inline;}
+#detailscol .span-14{width:540px;}
+#detailscol textarea{width:520px;}
+.observation .error ul{margin-bottom:0;}
 
-#detailscol .span-14 {
-  width: 540px;
-}
-
-#detailscol textarea {
-  width: 520px;
-}
-
-.observation .error ul {
-  margin-bottom: 0;
+.observation .curator_ident {
+  
 }

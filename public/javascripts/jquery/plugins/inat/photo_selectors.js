@@ -21,11 +21,42 @@
   // Setup an individual photoSelector
   function setup(wrapper, options) {
     // Store the options
-    $(wrapper).data('photoSelectorOptions', options);
+    $(wrapper).data('photoSelectorOptions', options)
+    
+    $(wrapper).addClass('photoSelector')
     
     // Grab all the existing content
     var existing = $(wrapper).contents();
     
+    if (!options.noControls) { buildControls(wrapper, options) };
+    
+    // Insert a container to hold the photos
+    var container = $('<div class="photoSelectorPhotos"></div>').css(
+      $.fn.photoSelector.defaults.containerCSS
+    );
+    container.addClass('clear');
+    $(wrapper).append(container);
+    
+    // Insert all existing content into the container
+    $(container).append(existing);
+    
+    $(".facebookAlbums .album", wrapper).live('click', function() {
+      $.fn.photoSelector.changeBaseUrl(wrapper, '/facebook/album/' + $(this).attr('data-aid'))
+    })
+    
+    // Fill with photos
+    if (options.queryOnLoad) {
+      $(document).ready(function() {
+        var q = '';
+        if (typeof(options.defaultQuery) == 'string') {
+          q = options.defaultQuery;
+        };
+        $.fn.photoSelector.queryPhotos(q, wrapper);
+      });
+    };
+  };
+  
+  function buildControls(wrapper, options) {
     // Insert a search field and button.  No forms, please
     var controls = $('<div class="buttonrow photoSelectorControls"></div>').css(
       $.fn.photoSelector.defaults.controlsCSS
@@ -46,10 +77,12 @@
     if (options.baseURL.match(/context=user/)) {
       var urlSelect = $('<select class="select" style="margin: 0 auto"></select>');
       var urls = options.urls || [];
-      urls.push({
-        title: "your hard drive",
-        url: '/photos/local_photo_fields?context=user'
-      });
+      if (!options.skipLocal) {
+        urls.push({
+          title: "your hard drive",
+          url: '/photos/local_photo_fields?context=user'
+        })
+      }
       $.each(urls, function() {
         if (this.url) {
           var title = this.title;
@@ -65,6 +98,11 @@
       
       $(urlSelect).change(function() {
         $.fn.photoSelector.changeBaseUrl(wrapper, $(this).val());
+      });
+
+      $('.back_to_albums').live('click', function(){
+        $.fn.photoSelector.changeBaseUrl(wrapper, urlSelect.val());
+        return false;
       });
 
       $(urlSelectWrapper).append(urlSelect);
@@ -112,16 +150,6 @@
       $(wrapper).find('.photoSelectorControls .button, .photoSelectorControls .text').hide();
     }
     
-    // Insert a container to hold the photos
-    var container = $('<div class="photoSelectorPhotos"></div>').css(
-      $.fn.photoSelector.defaults.containerCSS
-    );
-    container.addClass('clear');
-    $(wrapper).append(container);
-    
-    // Insert all existing content into the container
-    $(container).append(existing);
-    
     // Bind button clicks to search photos
     $(button).click(function(e) {
       $(wrapper).find('.photoSelectorPage').val(1);
@@ -143,18 +171,7 @@
         return false;
       };
     });
-    
-    // Fill with photos
-    if (options.queryOnLoad) {
-      $(document).ready(function() {
-        var q = '';
-        if (typeof(options.defaultQuery) == 'string') {
-          q = options.defaultQuery;
-        };
-        $.fn.photoSelector.queryPhotos(q, wrapper);
-      });
-    };
-  };
+  }
   
   $.fn.photoSelector.changeBaseUrl = function(wrapper, url) {
     var options = $(wrapper).data('photoSelectorOptions');
@@ -177,14 +194,17 @@
     var existing = $(wrapper).find('.photoSelectorPhotos input:checked').parent().clone();
     
     // Set loading status
-    $(wrapper).find('.photoSelectorPhotos').prepend(
-      $('<div class="loading status">Loading...</div>')
-    );
+    var loading = $('<center><span class="loading status inlineblock">Loading...</span></center>')
+      .css('margin-top', $(wrapper).height() / 2)
+    $(wrapper).shades('open', {
+      css: {'background-color': 'white', 'opacity': 0.7}, 
+      content: loading
+    })
     
     // Fetch new fields
     $(wrapper).find('.photoSelectorPhotos').load(
       baseURL, 
-      params, 
+      $.param(params),
       function(responseText, textStatus, XMLHttpRequest) {
         // Remove fields with identical values to the extracted checkboxes
         var existingValues = $(existing).find('input').map(function() {
@@ -208,7 +228,8 @@
         }
         
         // Unset loading status
-        $(wrapper).find('.photoSelectorPhotos').removeClass('loading status');
+        $(wrapper).shades('close')
+        
         if (typeof(options.afterQueryPhotos) == "function") options.afterQueryPhotos(q, wrapper, options);
       }
     );

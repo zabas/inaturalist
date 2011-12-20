@@ -1,3 +1,4 @@
+$KCODE = 'UTF8'
 # Be sure to restart your server when you modify this file
 
 # Uncomment below to force Rails into production mode when
@@ -5,7 +6,7 @@
 # ENV['RAILS_ENV'] ||= 'production'
 
 # Specifies gem version of Rails to use when vendor/rails is not present
-RAILS_GEM_VERSION = '2.3.8' unless defined? RAILS_GEM_VERSION
+RAILS_GEM_VERSION = '2.3.12' unless defined? RAILS_GEM_VERSION
 
 # Bootstrap the Rails environment, frameworks, and default configuration
 require File.join(File.dirname(__FILE__), 'boot')
@@ -20,6 +21,7 @@ FlickRawOptions = {
   'api_key' => FLICKR_API_KEY,
   'shared_secret' => FLICKR_SHARED_SECRET
 }
+DEFAULT_SRID = -1 # nofxx-georuby defaults to 4326.  Ugh.
 
 Rails::Initializer.run do |config|
   # Settings in config/environments/* take precedence over those specified here.
@@ -48,8 +50,8 @@ Rails::Initializer.run do |config|
   # Make sure the secret is at least 30 characters and all random, 
   # no regular words or you'll be exposed to dictionary attacks.
   config.action_controller.session = {
-    :session_key => INAT_CONFIG['rails']['secret'],
-    :secret      => INAT_CONFIG['rails']['secret']
+    :key => INAT_CONFIG['rails']['session_key'],
+    :secret => INAT_CONFIG['rails']['secret']
   }
 
   # Use the database for sessions instead of the cookie-based default,
@@ -129,11 +131,6 @@ WINDOWS = false
 # require 'wikipedia_service'
 # require 'batch_tools'
 # require 'georuby_extra'
-
-# # GeoIP setup, for IP geocoding
-# geoip_config = YAML.load(File.open("#{RAILS_ROOT}/config/geoip.yml"))
-# GEOIP = GeoIP.new(geoip_config[RAILS_ENV]['city'])
-
 
 ### API KEYS ###
 UBIO_KEY = INAT_CONFIG['ubio']['UBIO_KEY']

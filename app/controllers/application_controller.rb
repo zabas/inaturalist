@@ -3,6 +3,7 @@
 class ApplicationController < ActionController::Base
   include AuthenticatedSystem
   include RoleRequirementSystem
+  include Ambidextrous
   
   #has_mobile_fu
   #around_filter :catch_missing_mobile_templates
@@ -12,6 +13,8 @@ class ApplicationController < ActionController::Base
   filter_parameter_logging :password, :password_confirmation
   before_filter :login_from_cookie, :get_user#, :set_time_zone
   before_filter :return_here, :only => [:index, :show, :by_login]
+  before_filter :return_here_from_url
+  before_filter :user_logging
   
   PER_PAGES = [10,30,50,100]
   
@@ -58,7 +61,7 @@ class ApplicationController < ActionController::Base
   def get_net_flickr
     Net::Flickr.authorize(FLICKR_API_KEY, FLICKR_SHARED_SECRET)
   end
-  
+
   def get_flickraw
     FlickRaw.api_key = FLICKR_API_KEY
     FlickRaw.shared_secret = FLICKR_SHARED_SECRET
@@ -84,8 +87,12 @@ class ApplicationController < ActionController::Base
   def curator_required
     unless logged_in? && current_user.is_curator?
       flash[:notice] = "Only curators can access that page."
-      redirect_to session[:return_to] || root_url
-      return
+      if session[:return_to] == request.request_uri
+        redirect_to root_url
+      else
+        redirect_back_or_default(root_url)
+      end
+      return false
     end
   end
   
@@ -103,9 +110,25 @@ class ApplicationController < ActionController::Base
   # Filter to set a return url
   #
   def return_here
-    if request.format == Mime::HTML && !params.keys.include?('partial')
+    ie_needs_return_to = false
+    if request.user_agent =~ /msie/i && params[:format].blank? && 
+        ![Mime::JS, Mime::JSON, Mime::XML, Mime::KML, Mime::ATOM].map(&:to_s).include?(request.format.to_s)
+      ie_needs_return_to = true
+    end
+    if (ie_needs_return_to || request.format.html?) && !params.keys.include?('partial')
       session[:return_to] = request.request_uri
     end
+    true
+  end
+  
+  def return_here_from_url
+    return true if params[:return_to].blank?
+    session[:return_to] = params[:return_to]
+  end
+  
+  def user_logging
+    return true unless logged_in?
+    Rails.logger.info "  User: #{current_user.login} #{current_user.id}"
   end
   
   #
@@ -131,8 +154,8 @@ class ApplicationController < ActionController::Base
   end
   
   def load_user_by_login
-    @login = params[:login]
-    unless @selected_user = User.find_by_login(@login)
+    @login = params[:login].to_s.downcase
+    unless @selected_user = User.first(:conditions => ["lower(login) = ?", @login])
       return render_404
     end
   end
@@ -140,7 +163,7 @@ class ApplicationController < ActionController::Base
   # ThinkingSphinx returns a maximum of 50 pages. Anything higher than 
   # that, we want to 404 to avoid a TS error. 
   def limit_page_param_for_thinking_sphinx
-    if params[:page] && params[:page].to_i > 50 
+    if !params[:page].blank? && params[:page].to_i > 50 
       render_404 
     end 
   end
@@ -225,6 +248,10 @@ class ApplicationController < ActionController::Base
       flash[:notice] = "Only Administrators may access that page"
       redirect_to observations_path
     end
+  end
+  
+  def sanitize_sphinx_query(q)
+    q.gsub(/[^\w\s\.\'\-]+/, '').gsub(/\-/, '\-')
   end
 end
 

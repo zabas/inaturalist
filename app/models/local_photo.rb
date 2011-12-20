@@ -35,13 +35,14 @@ class LocalPhoto < Photo
   after_post_process :set_urls, :expire_observation_caches
     
   validates_presence_of :user
+  validates_attachment_content_type :file, :content_type => [/jpe?g/i, /png/i, /gif/i, /octet-stream/], 
+    :message => "must be JPG, PNG, or GIF"
   
   # I think this may be impossible using delayed_paperclip
   # validates_attachment_presence :file
   # validates_attachment_size :file, :less_than => 5.megabytes
   
   def set_defaults
-    self.native_page_url = url_for(observations.first) unless observations.blank?
     self.native_username = user.login
     self.license = Photo::COPYRIGHT
     true

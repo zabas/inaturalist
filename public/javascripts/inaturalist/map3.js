@@ -78,14 +78,19 @@ google.maps.Map.prototype.removeLastUnsavedMarker = function() {
 google.maps.Map.prototype.addObservation = function(observation, options) {
   options = options || {}
   
+  // Use private coords if they're there.  It's up to the json provider to 
+  // filter this out.
+  var lat = observation.private_latitude || observation.latitude,
+      lon = observation.private_longitude || observation.longitude
+  
   // Can't add an obs w/o coordinates
-  if (!observation.latitude || !observation.longitude) return false;
+  if (!lat || !lon) return false;
 
   if (!options.icon) {
     options.icon = iNaturalist.Map.createObservationIcon({observation: observation});
   }
   
-  var marker = this.createMarker(observation.latitude, observation.longitude, options);
+  var marker = this.createMarker(lat, lon, options);
   
   // store the marker for later use, or for easy removing
   this.observations[observation.id] = marker;
@@ -99,7 +104,7 @@ google.maps.Map.prototype.addObservation = function(observation, options) {
   };
   
   var bounds = this.getObservationBounds();
-  bounds.extend(new google.maps.LatLng(observation.latitude, observation.longitude));
+  bounds.extend(new google.maps.LatLng(lat, lon));
   this.setObservationBounds(bounds);
   
   // add the marker to the map
@@ -153,10 +158,10 @@ google.maps.Map.prototype.removeObservations = function(observations) {
 };
 
 google.maps.Map.prototype.getObservationBounds = function() {
-  if (typeof(this.observationBounds) == 'undefined') {
-    this.observationBounds = new google.maps.LatLngBounds();
-  };
-  return this.observationBounds;
+  if (!this.observationBounds) {
+    this.observationBounds = new google.maps.LatLngBounds()
+  }
+  return this.observationBounds
 };
 
 google.maps.Map.prototype.setObservationBounds = function(bounds) {
@@ -167,6 +172,11 @@ google.maps.Map.prototype.zoomToObservations = function() {
   this.fitBounds(this.getObservationBounds())
 };
 
+google.maps.Map.prototype.addPlaces = function(places) {
+  for (var i = places.length - 1; i >= 0; i--){
+    this.addPlace(places[i])
+  }
+}
 google.maps.Map.prototype.addPlace = function(place, options) {
   if (typeof(options) == 'undefined') { var options = {} };
   
@@ -225,9 +235,7 @@ google.maps.Map.prototype.removePlaces = function(places) {
   this.placeBounds = new google.maps.LatLngBounds();
 }
 google.maps.Map.prototype.zoomToPlaces = function() {
-  var bounds = this.getPlaceBounds();
-  this.setZoom(this.getBoundsZoomLevel(bounds));
-  this.setCenter(bounds.getCenter());
+  this.fitBounds(this.getPlaceBounds())
 }
 google.maps.Map.prototype.getPlaceBounds = function() {
   if (typeof(this.placeBounds) == 'undefined') {
@@ -251,33 +259,38 @@ google.maps.Map.prototype.buildObservationInfoWindow = function(observation) {
   if (typeof(existing) != 'undefined' && existing != null) {
     var infowinobs = $(existing).clone().get(0);
     $(infowinobs).find('.details').show();
-    var wrapper = $(
-      '<div class="mini infowindow observations"></div>').append(infowinobs);
+    var wrapper = $('<div class="compact mini infowindow observations"></div>').append(infowinobs);
     return $(wrapper).get(0);
   };
   
   var wrapper = $('<div class="observation"></div>');
+  var photoURL
   if (typeof(observation.image_url) != 'undefined' && observation.image_url != null) {
-    wrapper.append(
-      $('<img width="75" height="75"></img>').attr('src', observation.image_url).addClass('left')
-    );
+    photoURL = observation.image_url
   } else if (typeof(observation.photos) != 'undefined' && observation.photos.length > 0) {
+    photoURL = observation.photos[0].square_url
+  }
+  if (photoURL) {
     wrapper.append(
-      $('<img width="75" height="75"></img>').attr('src', observation.photos[0].square_url).addClass('left')
+      $('<img width="75" height="75"></img>').attr('src', photoURL).addClass('left')
     );
-  };
+  }
   
   wrapper.append(
-    $('<div class="readable attribute"></div>').append(
+    $('<div class="readable attribute inlineblock"></div>').append(
       $('<a href="/observations/'+observation.id+'"></a>').append(
         observation.species_guess
-      ),
+      )
+    )
+  );
+  if (observation.user) {
+    wrapper.append(
       ', by ',
       $('<a href="/people/'+observation.user.login+'"></a>').append(
         observation.user.login
       )
     )
-  );
+  }
   
   if (typeof(observation.short_description) != 'undefined' && observation.short_description != null) {
     wrapper.append($('<div class="description"></div>').append(observation.short_description));
@@ -285,7 +298,7 @@ google.maps.Map.prototype.buildObservationInfoWindow = function(observation) {
     wrapper.append($('<div class="description"></div>').append(observation.description));
   }
   
-  wrapper = $('<div class="observations mini infowindow"></div>').append(wrapper);
+  wrapper = $('<div class="compact observations mini infowindow"></div>').append(wrapper);
   
   return wrapper.get(0);
 };
@@ -295,7 +308,7 @@ google.maps.Map.prototype.buildObservationInfoWindow = function(observation) {
 google.maps.Map.prototype.showAllObsOverlay = function() {
   if (typeof(this._allObsOverlay) == 'undefined') {
     var myCopyright = new google.maps.CopyrightCollection();
-      var allObsLyr = new ObservationsTileLayer(myCopyright, 0, 18, {
+    var allObsLyr = new ObservationsTileLayer(myCopyright, 0, 18, {
       isPNG: true,
       tileUrlTemplate: this._observationsTileServer + '/{Z}/{X}/{Y}.png'
     });
@@ -308,7 +321,7 @@ google.maps.Map.prototype.showAllObsOverlay = function() {
     // baseIcon.shadow = null;
     // baseIcon.image = null;
     this._allObsMarker = new google.maps.Marker(new google.maps.LatLng(35,-90), {icon:baseIcon});
-    this._allObsMarker.hide();
+    this._allObsMarker.setVisible(false);
     google.maps.event.addListener(this._allObsMarker, 'click', function() {
       var observation = this._observation;
       var maxContentDiv = $('<div class="observations mini maxinfowindow"></div>').append(
@@ -329,10 +342,10 @@ google.maps.Map.prototype.showAllObsOverlay = function() {
         });
       });
     });
-    map.addOverlay(this._allObsMarker) ;
+    this._allObsMarker.map = map
   };
   
-  map.addOverlay(this._allObsOverlay);
+  this._allObsOverlay.map = map
   
   // Listen to all mouse mvmnts over the map to see if they pass near obs
   this._mouseMoveListenerHandle = google.maps.event.addListener(map, 'mousemove', 
@@ -346,12 +359,14 @@ google.maps.Map.prototype.hideAllObsOverlay = function() {
   };
 }
 
-google.maps.Map.prototype._mouseMoveListener = function(mouseLatLng) {
+google.maps.Map.prototype._mouseMoveListener = function(e) {
+  var mouseLatLng = e.latLng
   var zoom = this.getZoom();
-  var mousePx = G_NORMAL_MAP.getProjection().fromLatLngToPixel(mouseLatLng, zoom);
+  var mousePx = e.pixel
   var tileKey = iNaturalist.Map.obsTilePointsURL(Math.floor(mousePx.x / 256), 
     Math.floor(mousePx.y / 256), zoom);
   
+  window.tilePoints = window.tilePoints || {}
   if (typeof(window.tilePoints[tileKey]) == 'undefined' || window.tilePoints[tileKey].length == 0) return;
   var observations = window.tilePoints[tileKey];
   
@@ -371,7 +386,7 @@ google.maps.Map.prototype._mouseMoveListener = function(mouseLatLng) {
       return;
     }
     this._allObsMarker._observation = null;
-    this._allObsMarker.hide();
+    this._allObsMarker.setVisible(false);
   };
 }
 
@@ -387,7 +402,7 @@ iNaturalist.Map.createMap = function(options) {
     center: new google.maps.LatLng(options.lat || 0, options.lng || 0),
     zoom: 1,
     mapTypeId: google.maps.MapTypeId.TERRAIN,
-    controls: 'big',
+    streetViewControl: false,
     observationsTileServer: 'http://localhost:8000'
   }, options);
   
@@ -400,90 +415,204 @@ iNaturalist.Map.createMap = function(options) {
     map = new google.maps.Map(options.div, options);
   }
   map.controls[google.maps.ControlPosition.TOP_RIGHT].push(new iNaturalist.FullScreenControl(map));
-  map._observationsTileServer = options.observationsTileServer;
+  map._observationsTileServer = options.observationsTileServer
+  // map.overlayMapTypes.insertAt(0, iNaturalist.Map.buildObservationsMapType(map))
   
   return map;
 };
 
 // The following code should be abstracted out a bit more
 iNaturalist.Map.createPlaceIcon = function(options) {
-  if (typeof(options) == 'undefined') { var options = {} };
+  var options = options || {}
   var iconPath = "/images/mapMarkers/mm_34_stemless_";
-  if (typeof(options.color) == 'undefined') {
-    iconPath += "DeepPink";
-  }
-  else {
-    iconPath += options.color;
-  }
-  if (typeof(options.character) != 'undefined') {
-    iconPath += ('_' + options.character);
-  }
+  iconPath += options.color ? options.color : "DeepPink"
+  if (options.character) { iconPath += ('_' + options.character); }
   iconPath += '.png';
-  var place = new google.maps.Icon();
-  place.image = iconPath;
-  place.iconSize = new google.maps.Size(20,20);
-  place.iconAnchor = new google.maps.Point(10,10);
-  place.infoWindowAnchor = new google.maps.Point(10,0);
+  var place = new google.maps.MarkerImage(iconPath);
+  place.size = new google.maps.Size(20,20);
+  place.anchor = new google.maps.Point(10,10);
   return place;
 };
 
 iNaturalist.Map.createObservationIcon = function(options) {
   if (typeof(options) == 'undefined') { var options = {} };
   
+  var iconPath;
+  
   // Choose the right settings for the observation's iconic taxon
   if (options.observation) {
+    var iconSet = options.observation.coordinates_obscured ? 'STEMLESS_ICONS' : 'ICONS'
+    var iconicTaxonIconsSet = options.observation.coordinates_obscured ? 'STEMLESS_ICONIC_TAXON_ICONS' : 'ICONIC_TAXON_ICONS'
     if (options.observation.iconic_taxon) {
-      return iNaturalist.Map.ICONIC_TAXON_ICONS[options.observation.iconic_taxon.name];
+      iconPath = iNaturalist.Map[iconicTaxonIconsSet][options.observation.iconic_taxon.name];
     } else {
-      return iNaturalist.Map.ICONS['unknown34'];
-    };
-  };
-  
-  var iconPath = "/images/mapMarkers/mm_34_";
-  if (typeof(options.color) == 'undefined') {
-    iconPath += "HotPink";
-  }
-  else {
-    iconPath += options.color;
-  }
-  if (typeof(options.character) != 'undefined') {
-    iconPath += ('_' + options.character);
-  }
-  iconPath += '.png';
-  return iconPath
-  // var icon = new google.maps.Icon(G_DEFAULT_ICON);
-  // observation.image = iconPath;
-  // return observation;
-};
+      iconPath = iNaturalist.Map[iconSet]['unknown34'];
+    }
 
-// Create a custom TileLayer class that will lookup observations json for 
-// each tile
-ObservationsTileLayer = function(copyrights, minResolution, maxResolution, options) {
-  if (typeof(options) != 'undefined' && typeof(options.tileUrlTemplate) != 'undefined') {
-    this.tileUrlTemplate = options.tileUrlTemplate;
+    return iconPath
   }
-  return true;
+  
+  iconPath = "/images/mapMarkers/mm_34_"
+  iconPath += options.stemless ? "stemless_" : ""
+  iconPath += options.color || "HotPink"
+  iconPath += options.character ? ('_'+options.character) : ""
+  iconPath += '.png'
+  return iconPath
 };
-ObservationsTileLayer.prototype = new google.maps.OverlayView();
-ObservationsTileLayer.prototype.getTileUrl = function(tilePoint, zoom) {
-  var jsonURL = iNaturalist.Map.obsTilePointsURL(tilePoint.x, tilePoint.y, zoom);
-  if (typeof(window.tilePoints) == 'undefined') window.tilePoints = {};
-  
-  // if we already have data for this tile, skip the AJAX
-  if (typeof(window.tilePoints[jsonURL]) == 'undefined') {
-    $.getJSON(jsonURL, function(data, textStatus) {
-      window.tilePoints[jsonURL] = data;
-    });
-  };
-  
-  // Return the actual tile URL
-  var tileUrl = this.tileUrlTemplate || 'http://localhost:8000/{Z}/{X}/{Y}.png';
-  tileUrl = tileUrl.replace('{Z}', zoom).replace('{X}', tilePoint.x).replace('{Y}', tilePoint.y);
-  return tileUrl;
-}
 
 iNaturalist.Map.obsTilePointsURL = function(x, y, zoom) {
   return '/observations/tile_points/' + zoom + '/' + x + '/' + y + '.json';
+}
+
+// Create a custom TileLayer class that will lookup observations json for 
+// each tile
+iNaturalist.Map.buildObservationsMapType = function(map) {
+  var tileUrlTemplate = map._observationsTileServer ? map._observationsTileServer+'/{Z}/{X}/{Y}.png' : 'http://localhost:8000/{Z}/{X}/{Y}.png'
+  
+  // // Create an invisible map marker to move over raster pts
+  // var baseIcon = new google.maps.MarkerImage();
+  // baseIcon.size = new google.maps.Size(20,20);
+  // baseIcon.anchor = new google.maps.Point(10,10);
+  // map._allObsMarker = new google.maps.Marker(new google.maps.LatLng(35,-90), {icon:baseIcon});
+  // map._allObsMarker.setVisible(false);
+  // google.maps.event.addListener(map._allObsMarker, 'click', function() {
+  //   var observation = map._observation;
+  //   var maxContentDiv = $('<div class="observations mini maxinfowindow"></div>').append(
+  //     $('<div class="loading status">Loading...</div>')
+  //   ).get(0);
+  //   map.openInfoWindowHtml(
+  //     map.buildObservationInfoWindow(observation),
+  //     {maxContent: maxContentDiv, maxTitle: 'More about map observation'}
+  //   );
+  //   var infoWindow = map.getInfoWindow();
+  // });
+  // map._allObsMarker.map = map
+  // 
+  // // Listen to all mouse mvmnts over the map to see if they pass near obs
+  // map._mouseMoveListenerHandle = google.maps.event.addListener(map, 'mousemove', map._mouseMoveListener);
+  
+  return new google.maps.ImageMapType({
+    getTileUrl: function(tilePoint, zoom) {
+      // var jsonURL = iNaturalist.Map.obsTilePointsURL(tilePoint.x, tilePoint.y, zoom);
+      // if (typeof(window.tilePoints) == 'undefined') window.tilePoints = {};
+      // 
+      // // if we already have data for this tile, skip the AJAX
+      // if (typeof(window.tilePoints[jsonURL]) == 'undefined') {
+      //   $.getJSON(jsonURL, function(data, textStatus) {
+      //     window.tilePoints[jsonURL] = data;
+      //   });
+      // }
+      // 
+      // Return the actual tile URL
+      var tileUrl = tileUrlTemplate
+      tileUrl = tileUrl.replace('{Z}', zoom).replace('{X}', tilePoint.x).replace('{Y}', tilePoint.y);
+      return tileUrl;
+    },
+    tileSize: new google.maps.Size(256, 256),
+    isPng: true,
+    name: "Observations"
+  })
+}
+
+iNaturalist.Map.builtPlacesMapType = function(map, options) {
+  options = $.extend({
+    tilestacheServer: ''
+  }, options)
+  map.placeMarkers = []
+  map.placeUrlsRequested = {}
+  var countryIcon = new google.maps.MarkerImage('/images/mapMarkers/mm_20_stemless_DodgerBlue_dark.png')
+  countryIcon.size = new google.maps.Size(12,12)
+  countryIcon.anchor = new google.maps.Point(6,6)
+  var stateIcon = new google.maps.MarkerImage('/images/mapMarkers/mm_20_stemless_DodgerBlue.png')
+  stateIcon.size = new google.maps.Size(12,12)
+  stateIcon.anchor = new google.maps.Point(6,6)
+  var countyIcon = new google.maps.MarkerImage('/images/mapMarkers/mm_20_stemless_DodgerBlue_light.png')
+  countyIcon.size = new google.maps.Size(12,12)
+  countyIcon.anchor = new google.maps.Point(6,6)
+  var openSpaceIcon = new google.maps.MarkerImage('/images/mapMarkers/mm_20_stemless_iNatGreen.png')
+  openSpaceIcon.size = new google.maps.Size(12,12)
+  openSpaceIcon.anchor = new google.maps.Point(6,6)
+  var PlacesMapType = function(tileSize) { this.tileSize = tileSize; }
+  PlacesMapType.prototype.getTile = function(coord, zoom, ownerDocument) {
+    var tileSize = this.tileSize,
+        max = Math.pow(2, zoom),
+        coordX = coord.x < 0 ? max + coord.x : coord.x,
+        coordY = coord.y < 0 ? max + coord.y : coord.y,
+        layer = layerForZoom(zoom),
+        div = ownerDocument.createElement('DIV'),
+        url = options.tilestacheServer+'/'+layer+'/'+zoom+'/'+coordX+'/'+coordY+'.geojson',
+        icon
+    
+    if (coordX > max) { coordX = coordX - max }
+    if (coordY > max) { coordY = coordY - max }
+    
+    if (map.placeUrlsRequested[url]) {
+      return div
+    }
+    map.placeUrlsRequested[url] = true
+    
+    $.getJSON(url, function(json) {
+      for (var i = json.features.length - 1; i >= 0; i--){
+        var f = json.features[i],
+            place = f.properties,
+            proj = map.getProjection()
+        place.latitude = f.geometry.coordinates[1]
+        place.longitude = f.geometry.coordinates[0]
+        var pt = proj.fromLatLngToPoint(new google.maps.LatLng(place.latitude, place.longitude))
+        switch (place.place_type) {
+          case 12:
+            icon = countryIcon
+            break
+          case 9:
+            icon = countyIcon
+            break
+          case 100:
+            icon = openSpaceIcon
+            break
+          default:
+            icon = stateIcon
+        }
+        var marker = map.createMarker(place.latitude, place.longitude, {
+          icon: icon, 
+          title: place.display_name
+        })
+        marker.setMap(map)
+        marker.placeId = place.id
+        marker.layer = layer
+        marker.setZIndex(1)
+        marker.setVisible(marker.layer == layerForZoom(map.getZoom()))
+        google.maps.event.addListener(marker, 'click', function() {
+          window.location = '/places/'+this.placeId
+        })
+        map.placeMarkers.push(marker)
+      }
+    })
+    return div
+  }
+  
+  function layerForZoom(zoom) {
+    var layer = 'country_points_5'
+    if (zoom > 3 && zoom <= 5) {
+      layer = 'place_points_5'
+    } else if (zoom > 5 && zoom <= 7) {
+      layer = 'place_points_r0'
+    } else if (zoom > 7 && zoom <= 9) {
+      layer = 'place_points_r1'
+    } else if (zoom > 9) {
+      layer = 'place_points_r2'
+    }
+    return layer  
+  }
+  
+  google.maps.event.addListener(map, 'zoom_changed', function() {
+    var zoom = map.getZoom(),
+        layer = layerForZoom(zoom)
+    for (var i = map.placeMarkers.length - 1; i >= 0; i--){
+      map.placeMarkers[i].setVisible(map.placeMarkers[i].layer == layer)
+    }
+  })
+  
+  return PlacesMapType
 }
 
 iNaturalist.FullScreenControl = function(map) {
@@ -493,15 +622,84 @@ iNaturalist.FullScreenControl = function(map) {
   controlDiv.appendChild(controlUI.get(0))
   
   controlUI.toggle(function() {
-    $(this).html('Exit Full screen')
+    var oldCenter = map.getCenter()
+    $(this).html('Exit full screen').css('font-weight', 'bold')
     $(map.getDiv()).addClass('fullscreen')
     google.maps.event.trigger(map, 'resize')
+    map.setCenter(oldCenter)
   }, function() {
-    $(this).html('Full screen')
+    var oldCenter = map.getCenter()
+    $(this).html('Full screen').css('font-weight', 'normal')
     $(map.getDiv()).removeClass('fullscreen')
     google.maps.event.trigger(map, 'resize')
+    map.setCenter(oldCenter)
   })
   return controlDiv;
+}
+
+iNaturalist.OverlayControl = function(map) {
+  var controlDiv = document.createElement('DIV')
+  controlDiv.style.padding = '5px';
+  var controlUI = $('<div>Overlays</div>').addClass('gmapv3control overlaycontrol')
+  var ul = $('<ul></ul>').hide()
+  controlUI.append(ul)
+  controlUI.hover(function() {
+    $('ul', this).show()
+  }, function() {
+    $('ul', this).hide()
+  })
+  controlDiv.appendChild(controlUI.get(0))
+  this.div = controlDiv
+  this.map = map
+  if (map.overlays) {
+    for (var i=0; i < map.overlays.length; i++) {
+      this.addOverlay(map.overlays[i])
+    }
+  }
+  return controlDiv;
+}
+iNaturalist.OverlayControl.prototype.addOverlay = function(lyr) {
+  var map = this.map,
+      ul = $('ul', this.div)
+      name = lyr.name,
+      id = lyr.id || name,
+      overlay = lyr.overlay,
+      checkbox = $('<input type="checkbox"></input>')
+        .attr('id', id)
+        .attr('name', name)
+        .attr('checked', overlay.getMap()),
+      label = $('<label></label>').attr('for', id).html(name),
+      li = $('<li></li>')
+  checkbox.click(function() {
+    var name = $(this).attr('name'),
+        overlay = map.getOverlay(name).overlay
+    overlay.setMap(overlay.getMap() ? null : map)
+  })
+  li.append(checkbox, label)
+  ul.append(li)
+}
+
+google.maps.Map.prototype.addOverlay = function(name, overlay, options) {
+  options = options || {}
+  this.overlays = this.overlays || []
+  this.overlays.push({
+    name: name,
+    overlay: overlay,
+    id: options.id
+  })
+  if (overlay.setMap) { overlay.setMap(this) }
+}
+google.maps.Map.prototype.removeOverlay = function(name) {
+  if (!this.overlays) { return }
+  for (var i=0; i < this.overlays.length; i++) {
+    if (this.overlays[i].name == name) { this.overlays.splice(i) }
+  }
+}
+google.maps.Map.prototype.getOverlay = function(name) {
+  if (!this.overlays) { return }
+  for (var i=0; i < this.overlays.length; i++) {
+    if (this.overlays[i].name == name) { return this.overlays[i] }
+  }
 }
 
 // Static constants
@@ -512,6 +710,15 @@ iNaturalist.Map.ICONS = {
   OrangeRed34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_OrangeRed.png"),
   DarkMagenta34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_DarkMagenta.png"),
   unknown34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_unknown.png")
+};
+
+iNaturalist.Map.STEMLESS_ICONS = {
+  DodgerBlue34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_stemless_DodgerBlue.png"),
+  DeepPink34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_stemless_DeepPink.png"),
+  iNatGreen34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_stemless_iNatGreen.png"),
+  OrangeRed34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_stemless_OrangeRed.png"),
+  DarkMagenta34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_stemless_DarkMagenta.png"),
+  unknown34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_stemless_unknown.png")
 };
 
 iNaturalist.Map.ICONIC_TAXON_ICONS = {
@@ -529,6 +736,21 @@ iNaturalist.Map.ICONIC_TAXON_ICONS = {
   Arachnida: iNaturalist.Map.ICONS.OrangeRed34
 };
 
+iNaturalist.Map.STEMLESS_ICONIC_TAXON_ICONS = {
+  Protozoa: iNaturalist.Map.STEMLESS_ICONS.DarkMagenta34,
+  Animalia: iNaturalist.Map.STEMLESS_ICONS.DodgerBlue34,
+  Plantae: iNaturalist.Map.STEMLESS_ICONS.iNatGreen34,
+  Fungi: iNaturalist.Map.STEMLESS_ICONS.DeepPink34,
+  Amphibia: iNaturalist.Map.STEMLESS_ICONS.DodgerBlue34,
+  Reptilia: iNaturalist.Map.STEMLESS_ICONS.DodgerBlue34,
+  Aves: iNaturalist.Map.STEMLESS_ICONS.DodgerBlue34,
+  Mammalia: iNaturalist.Map.STEMLESS_ICONS.DodgerBlue34,
+  Actinopterygii: iNaturalist.Map.STEMLESS_ICONS.DodgerBlue34,
+  Mollusca: iNaturalist.Map.STEMLESS_ICONS.OrangeRed34,
+  Insecta: iNaturalist.Map.STEMLESS_ICONS.OrangeRed34,
+  Arachnida: iNaturalist.Map.STEMLESS_ICONS.OrangeRed34
+};
+
 iNaturalist.Map.ICONIC_TAXON_COLORS = {
   Protozoa: '#8B008B', // 'DarkMagenta',
   Animalia: '#1E90FF', //'DodgerBlue',
@@ -544,4 +766,6 @@ iNaturalist.Map.ICONIC_TAXON_COLORS = {
   Arachnida: '#FF4500'
 }
 
+
 })();
+

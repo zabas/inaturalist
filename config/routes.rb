@@ -1,4 +1,7 @@
 ActionController::Routing::Routes.draw do |map|
+
+  simplified_login_regex = /\w[^\.,\/]+/
+  
   map.root :controller => 'welcome', :action => 'index'
   map.resources :users
   map.resource :session

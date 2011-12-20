@@ -14,7 +14,7 @@ class FlickrPhoto < Photo
         fp_flickr_user_id = self.api_response.owner.nsid
       end
       
-      unless fp_flickr_user_id == self.user.flickr_identity.flickr_user_id
+      if user.flickr_identity.blank? || fp_flickr_user_id != user.flickr_identity.flickr_user_id
         errors.add(:user, "must own the photo on Flickr.")
       end
     end
@@ -26,6 +26,12 @@ class FlickrPhoto < Photo
       flickr.auth.token = options[:user].flickr_identity.token
     end
     flickr.photos.get_info(native_photo_id)
+  rescue Net::Flickr::APIError => e
+    if options.blank?
+      Rails.logger.error "[ERROR #{Time.now}] Net::Flickr had an auth " + 
+        "token when it shouldn't: #{flickr.auth.inspect}"
+    end
+    raise e
   end
   
   def self.new_from_api_response(api_response, options = {})
@@ -57,34 +63,46 @@ class FlickrPhoto < Photo
   end
   
   def self.new_from_flickraw(fp, options = {})
-    FlickRaw.api_key = FLICKR_API_KEY
-    FlickRaw.shared_secret = FLICKR_SHARED_SECRET
-    urls = fp.urls.index_by(&:type)
-    photopage_url = urls['photopage']._content rescue nil
-    options.update(
-      :native_photo_id => fp.id,
-      :native_page_url => photopage_url,
-      :native_username => fp.owner.username,
-      :native_realname => fp.owner.realname,
-      :license         => fp.license
-    )
+    if fp.respond_to?(:urls)
+      urls = fp.urls.index_by{|u| u.type}
+      photopage_url = urls['photopage']._content rescue nil
+    else
+      photopage_url = "http://flickr.com/photos/#{fp.owner}/#{fp.id}"
+    end
+    options[:native_photo_id] = fp.id
+    options[:native_page_url] = photopage_url
+    options[:native_username] = fp.owner.username if fp.owner.respond_to?(:username)
+    options[:native_username] ||= fp.owner
+    options[:native_realname] = fp.owner.realname if fp.owner.respond_to?(:realname)
+    options[:native_realname] ||= fp.ownername
+    options[:license] ||= fp.license if fp.respond_to?(:license)
     
     # Set sizes
-    unless sizes = options.delete(:sizes)
-      if options[:user] && options[:user].flickr_identity
-        sizes = flickr.photos.getSizes(:photo_id => fp.id, 
-          :auth_token => options[:user].flickr_identity.token)
-      else
-        sizes = flickr.photos.getSizes(:photo_id => fp.id)
-      end
+    if fp.respond_to?(:url_sq)
+      options[:square_url]   ||= fp.to_hash["url_sq"]
+      options[:thumb_url]    ||= fp.to_hash["url_t"]
+      options[:small_url]    ||= fp.to_hash["url_s"]
+      options[:medium_url]   ||= fp.to_hash["url_m"]
+      options[:large_url]    ||= fp.to_hash["url_l"]
+      options[:original_url] ||= fp.to_hash["url_o"]
     end
-    sizes = sizes.index_by(&:label)
-    options[:square_url]   ||= sizes['Square'].source rescue nil
-    options[:thumb_url]    ||= sizes['Thumbnail'].source rescue nil
-    options[:small_url]    ||= sizes['Small'].source rescue nil
-    options[:medium_url]   ||= sizes['Medium'].source rescue nil
-    options[:large_url]    ||= sizes['Large'].source rescue nil
-    options[:original_url] ||= sizes['Original'].source rescue nil
+    
+    if options[:square_url].blank?
+      unless sizes = options.delete(:sizes)
+        if options[:user] && options[:user].flickr_identity
+          sizes = flickr.photos.getSizes(:photo_id => fp.id, :auth_token => options[:user].flickr_identity.token)
+        else
+          sizes = flickr.photos.getSizes(:photo_id => fp.id)
+        end
+      end
+      sizes = sizes.index_by{|s| s.label}
+      options[:square_url]   ||= sizes['Square'].source rescue nil
+      options[:thumb_url]    ||= sizes['Thumbnail'].source rescue nil
+      options[:small_url]    ||= sizes['Small'].source rescue nil
+      options[:medium_url]   ||= sizes['Medium'].source rescue nil
+      options[:large_url]    ||= sizes['Large'].source rescue nil
+      options[:original_url] ||= sizes['Original'].source rescue nil
+    end
     
     flickr_photo = new(options)
     flickr_photo.api_response = fp
@@ -141,21 +159,9 @@ class FlickrPhoto < Photo
     end
     
     # Try to get a taxon
-    photo_taxa = to_taxa
-    unless photo_taxa.blank?
-      unless photo_taxa.detect{|t| t.rank_level.blank?}
-        photo_taxa = photo_taxa.sort_by(&:rank_level)
-      end
-      observation.taxon = photo_taxa.detect(&:species_or_lower?)
-      observation.taxon ||= photo_taxa.first
-      
-      if observation.taxon
-        begin
-          observation.species_guess = observation.taxon.common_name.name
-        rescue
-          observation.species_guess = observation.taxon.name
-        end
-      end
+    observation.taxon = to_taxon
+    if t = observation.taxon
+      observation.species_guess = t.common_name.try(:name) || t.name
     end
 
     observation
@@ -172,7 +178,7 @@ class FlickrPhoto < Photo
       tags = api_response.tags.values.map(&:raw)
       machine_tags = tags.select{|t| t =~ /taxonomy\:/}
       taxa = Taxon.tags_to_taxa(machine_tags) unless machine_tags.blank?
-      taxa ||= Taxon.tags_to_taxa(tags)
+      taxa ||= Taxon.tags_to_taxa(tags, options)
       taxa
     end
     taxa.compact
