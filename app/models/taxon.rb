@@ -93,10 +93,15 @@ class Taxon < ActiveRecord::Base
     const_set rank.upcase, rank
     const_set "#{rank.upcase}_LEVEL", level
     define_method "find_#{rank}" do
-      return nil if rank_level >= level
-      ancestors.first(:conditions => {:rank => rank})
+      return self if rank_level == level
+      return nil if rank_level.to_i > level.to_i
+      @cached_ancestors ||= ancestors.all
+      @cached_ancestors.detect{|a| a.rank == rank}
     end
     alias_method(rank, "find_#{rank}") unless method_exists?(rank)
+    define_method "#{rank}?" do
+      self.rank == rank
+    end
   end
   
   RANKS = RANK_LEVELS.keys
@@ -146,7 +151,8 @@ class Taxon < ActiveRecord::Base
     'Plantae' => 'Plants',
     'Fungi' => 'Fungi',
     'Protozoa' => 'Protozoans',
-    'Mollusca' => 'Mollusks'
+    'Mollusca' => 'Mollusks',
+    'Chromista' => 'Chromista'
   }
   
   ICONIC_TAXON_DISPLAY_NAMES = ICONIC_TAXON_NAMES.merge(
@@ -193,7 +199,7 @@ class Taxon < ActiveRecord::Base
     end
   end
   
-  PROBLEM_NAMES = %w(california lichen)
+  PROBLEM_NAMES = ['california', 'lichen', 'bee hive']
   
   named_scope :observed_by, lambda {|user|
     { :joins => """
@@ -281,6 +287,9 @@ class Taxon < ActiveRecord::Base
   named_scope :from_place, lambda {|place|
     {:include => [:listed_taxa], :conditions => ["listed_taxa.place_id = ?", place]}
   }
+  named_scope :on_list, lambda {|list|
+    {:include => [:listed_taxa], :conditions => ["listed_taxa.list_id = ?", list]}
+  }
   
   ICONIC_TAXA = Taxon.sort_by_ancestry(self.iconic_taxa.arrange)
   ICONIC_TAXA_BY_ID = ICONIC_TAXA.index_by(&:id)
@@ -295,6 +304,7 @@ class Taxon < ActiveRecord::Base
         update_listed_taxa
         update_life_lists
         update_obs_iconic_taxa
+        Observation.send_later(:update_stats_for_observations_of, id, :dj_priority => 2)
       end
       set_iconic_taxon
     end
@@ -329,9 +339,14 @@ class Taxon < ActiveRecord::Base
     end
     
     if !new_record? && (iconic_taxon_id_changed? || options[:force])
-      descendants.update_all(
-        "iconic_taxon_id = #{iconic_taxon_id || 'NULL'}", 
-        ["iconic_taxon_id IN (?) OR iconic_taxon_id IS NULL", ancestor_ids])
+      new_child_ancestry = "#{ancestry}/#{id}"
+      conditions = ["(ancestry LIKE ? OR ancestry = ?)", "#{new_child_ancestry}/%", new_child_ancestry]
+      conditions[0] += " AND (iconic_taxon_id IN (?) OR iconic_taxon_id IS NULL)"
+      conditions << ancestry_was.to_s.split('/')
+      Taxon.update_all(
+        ["iconic_taxon_id = ?", iconic_taxon_id],
+        conditions
+      )
       Taxon.send_later(:set_iconic_taxon_for_observations_of, id)
     end
     true
@@ -383,6 +398,20 @@ class Taxon < ActiveRecord::Base
       Observation.send_later(:unobscure_coordinates_for_observations_of, id)
     end
     true
+  end
+  
+  def self.update_ancestor_photos(taxon_id, photo_id)
+    unless taxon = Taxon.find_by_id(taxon_id)
+      return
+    end
+    unless photo = Photo.find_by_id(photo_id)
+      return
+    end
+    taxon.ancestors.each do |anc|
+      unless anc.photos.count > 0
+        anc.photos << photo
+      end
+    end
   end
   
   # /Callbacks ##############################################################
@@ -452,7 +481,7 @@ class Taxon < ActiveRecord::Base
   end
   
   def move_to_child_of(taxon)
-    self.update_attributes(:parent => taxon)
+    update_attributes(:parent => taxon)
   end
   
   def default_name
@@ -515,7 +544,8 @@ class Taxon < ActiveRecord::Base
   #
   def photos_with_backfill(options = {})
     options[:limit] ||= 9
-    chosen_photos = photos.all(:limit => options[:limit])
+    chosen_photos = taxon_photos.all(:limit => options[:limit], 
+      :include => :photo, :order => "taxon_photos.id ASC").map{|tp| tp.photo}
     if chosen_photos.size < options[:limit]
       conditions = "taxa.ancestry LIKE '#{ancestry}/#{id}%'"
       if chosen_photos.size > 0
@@ -524,6 +554,7 @@ class Taxon < ActiveRecord::Base
       chosen_photos += Photo.all(
         :include => [{:taxon_photos => :taxon}], 
         :conditions => conditions,
+        :order => "taxon_photos.id ASC",
         :limit => options[:limit] - chosen_photos.size)
     end
     flickr_chosen_photos = []
@@ -599,14 +630,32 @@ class Taxon < ActiveRecord::Base
   # Updated the "cached" ancestor values in all listed taxa with this taxon
   def update_listed_taxa
     return true if ancestry.blank?
-    ListedTaxon.update_all(
-      "taxon_ancestor_ids = '#{ancestry}'", 
-      "taxon_id = #{self.id}")
+    return true if ancestry_callbacks_disabled?
+    Taxon.send_later(:update_listed_taxa_for, id, ancestry_was)
     true
   end
   
-  def update_life_lists
-    LifeList.send_later(:update_life_lists_for_taxon, self)
+  def self.update_listed_taxa_for(taxon, ancestry_was)
+    taxon = Taxon.find_by_id(taxon) unless taxon.is_a?(Taxon)
+    return true unless taxon
+    ListedTaxon.update_all("taxon_ancestor_ids = '#{taxon.ancestry}'", "taxon_id = #{taxon.id}")
+    old_ancestry = ancestry_was
+    old_ancestry = old_ancestry.blank? ? taxon.id : "#{old_ancestry}/#{taxon.id}"
+    new_ancestry = taxon.ancestry
+    new_ancestry = new_ancestry.blank? ? taxon.id : "#{new_ancestry}/#{taxon.id}"
+    ListedTaxon.update_all(
+      "taxon_ancestor_ids = regexp_replace(taxon_ancestor_ids, '^#{old_ancestry}', '#{new_ancestry}')", 
+      ["taxon_ancestor_ids = ? OR taxon_ancestor_ids LIKE ?", old_ancestry.to_s, "#{old_ancestry}/%"]
+    )
+  end
+  
+  def update_life_lists(options = {})
+    ids = options[:skip_ancestors] ? [id] : [id, ancestor_ids].flatten.compact
+    if ListRule.exists?([
+        "operator LIKE 'in_taxon%' AND operand_type = ? AND operand_id IN (?)", 
+        Taxon.to_s, ids])
+      LifeList.send_later(:update_life_lists_for_taxon, self, :dj_priority => 1)
+    end
     true
   end
   
@@ -629,23 +678,14 @@ class Taxon < ActiveRecord::Base
     reload # there's a chance taxon names have been created since load
     return true unless default_name
     [default_name.name, name].uniq.each do |candidate|
-      # Skip if this name isn't unique
-      if TaxonName.count(:select => "distinct(taxon_id)", :conditions => {:name => candidate}) > 1  
-        next
-      end
-      begin
-        candidate = candidate.gsub(/[\.\'\?\!\\\/]/, '').downcase
-        logger.info "Updating unique_name for #{self} to #{candidate}"
-        Taxon.update_all(["unique_name = ?", candidate], ["id = ?", self])
-      rescue ActiveRecord::StatementInvalid => e
-        next if e.message =~ /duplicate key value violates unique/
-        raise e
-      end
+      candidate = candidate.gsub(/[\.\'\?\!\\\/]/, '').downcase
+      return if unique_name == candidate
+      next if Taxon.exists?(:unique_name => candidate)
+      Taxon.update_all(["unique_name = ?", candidate], ["id = ?", self])
       break
     end
   end
   
-
   def wikipedia_summary(options = {})
     if super && super.match(/^\d\d\d\d-\d\d-\d\d$/)
       last_try_date = DateTime.parse(super)
@@ -733,7 +773,12 @@ class Taxon < ActiveRecord::Base
       end
     end
     
-    LifeList.send_later(:update_life_lists_for_taxon, self)
+    LifeList.send_later(:update_life_lists_for_taxon, self, :dj_priority => 1)
+    Taxon.send_later(:update_listed_taxa_for, self, :dj_priority => 1)
+    
+    flags.each do |flag|
+      flag.destroy unless flag.valid?
+    end
     
     reject.reload
     logger.info "[INFO] Merged #{reject} into #{self}"
@@ -820,9 +865,73 @@ class Taxon < ActiveRecord::Base
     ICONIC_TAXA_BY_ID[iconic_taxon_id].try(:name)
   end
   
+  # ancestry overrides - some ancestry methods iterate over ALL descendants 
+  # in memory.  It's database agnostic but massively ineffecient
+  def update_descendants_with_new_ancestry
+    return true if ancestry_callbacks_disabled?
+    return true unless changed.include?(self.base_class.ancestry_column.to_s) && !new_record? && valid?
+    old_ancestry = send("#{base_class.ancestry_column}_was")
+    old_ancestry = old_ancestry.blank? ? id : "#{old_ancestry}/#{id}"
+    new_ancestry = send(base_class.ancestry_column)
+    new_ancestry = new_ancestry.blank? ? id : "#{new_ancestry}/#{id}"
+    base_class.update_all(
+      "#{base_class.ancestry_column} = regexp_replace(#{base_class.ancestry_column}, '^#{old_ancestry}', '#{new_ancestry}')", 
+      descendant_conditions
+    )
+    Taxon.send_later(:update_descendants_with_new_ancestry, id, child_ancestry, :dj_priority => 1)
+    true
+  end
+  
+  def default_photo
+    if taxon_photos.loaded?
+      taxon_photos.sort_by{|tp| tp.id}.first.try(:photo)
+    else
+      taxon_photos.first(:include => [:photo], :order => "taxon_photos.id ASC").try(:photo)
+    end
+  end
+  
+  def self.update_descendants_with_new_ancestry(taxon, child_ancestry_was)
+    taxon = Taxon.find_by_id(taxon) unless taxon.is_a?(Taxon)
+    return unless taxon
+    Rails.logger.info "[INFO #{Time.now}] updating descendants of #{taxon}"
+    ThinkingSphinx.deltas_enabled = false
+    do_in_batches(:conditions => taxon.descendant_conditions) do |d|
+      d.without_ancestry_callbacks do
+        d.update_life_lists(:skip_ancestors => true)
+        d.set_iconic_taxon
+        d.update_obs_iconic_taxa
+      end
+    end
+    ThinkingSphinx.deltas_enabled = true
+  end
+  
+  def apply_orphan_strategy
+    return if ancestry_callbacks_disabled?
+    return if new_record?
+    Taxon.send_later(:apply_orphan_strategy, child_ancestry, :dj_priority => 1)
+  end
+  
+  def self.apply_orphan_strategy(child_ancestry_was)
+    # return unless taxon
+    Rails.logger.info "[INFO #{Time.now}] applying orphan strategy to #{child_ancestry_was}"
+    descendant_conditions = [
+      "ancestry = ? OR ancestry LIKE ?", 
+      child_ancestry_was, "#{child_ancestry_was}/%"
+    ]
+    do_in_batches(:conditions => descendant_conditions) do |d|
+      d.without_ancestry_callbacks do
+        d.destroy
+      end
+    end
+  end
+  
   include TaxaHelper
   def image_url
     taxon_image_url(self)
+  end
+  
+  def photo_url
+    photos.blank? ? nil : image_url
   end
   
   # Static ##################################################################
@@ -925,13 +1034,15 @@ class Taxon < ActiveRecord::Base
     taxon = Taxon.find_by_id(taxon) unless taxon.is_a?(Taxon)
     return unless taxon
     Observation.update_all(
-      "iconic_taxon_id = #{taxon.iconic_taxon_id || 'NULL'}",
+      ["iconic_taxon_id = ?", taxon.iconic_taxon_id],
       ["taxon_id = ?", taxon.id]
     )
     
-    taxon.descendants.find_each(:conditions => "observations_count > 0") do |descendant|
+    conds = taxon.descendant_conditions
+    conds[0] += " AND observations_count > 0"
+    Taxon.do_in_batches(:conditions => conds) do |descendant|
       Observation.update_all(
-        "iconic_taxon_id = #{taxon.iconic_taxon_id || 'NULL'}",
+        ["iconic_taxon_id = ?", taxon.iconic_taxon_id],
         ["taxon_id = ?", descendant.id]
       )
     end
@@ -962,6 +1073,48 @@ class Taxon < ActiveRecord::Base
             ON o.taxon_id=t.record_id
     """
     Taxon.find_by_sql(sql)
+  end
+  
+  def self.single_taxon_for_name(name)
+    return if PROBLEM_NAMES.include?(name.downcase)
+    name = name[/.+\((.+?)\)/, 1] if name =~ /.+\(.+?\)/
+    name = name.gsub(/\sss?p\.?\s*$/, '')
+    taxon_names = TaxonName.all(:limit => 5, :include => :taxon, :conditions => [
+      "lower(name) = ?", name.strip.gsub(/[\s_]+/, ' ').downcase])
+    return taxon_names.first.taxon if taxon_names.size == 1
+    taxa = taxon_names.map{|tn| tn.taxon}.compact
+    if taxa.blank?
+      begin
+        taxa = Taxon.search(name)
+      rescue Riddle::ConnectionError => e
+        return
+      end
+    end
+    sorted = Taxon.sort_by_ancestry(taxa.compact)
+    return if sorted.blank?
+    return sorted.first if sorted.size == 1
+    return unless sorted.first.ancestor_of?(sorted.last)
+    sorted.first
+  end
+  
+  def self.default_json_options
+    {
+      :methods => [:default_name, :photo_url, :iconic_taxon_name, :conservation_status_name],
+      :except => [:delta, :auto_description, :source_url, 
+        :source_identifier, :creator_id, :updater_id, :version, 
+        :featured_at, :auto_photos, :locked],
+      :include => {
+        :taxon_photos => {
+          :include => {
+            :photo => {
+              :methods => [:license_code, :attribution],
+              :except => [:original_url, :file_processing, :file_file_size, 
+                :file_content_type, :file_file_name, :mobile]
+            }
+          }
+        }
+      }
+    }
   end
   
   # /Static #################################################################

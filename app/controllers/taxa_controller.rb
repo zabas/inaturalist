@@ -38,6 +38,9 @@ class TaxaController < ApplicationController
   LIST_VIEW = "list"
   BROWSE_VIEWS = [GRID_VIEW, LIST_VIEW]
   ALLOWED_SHOW_PARTIALS = %w(chooser)
+  MOBILIZED = [:show, :index]
+  before_filter :unmobilized, :except => MOBILIZED
+  before_filter :mobilized, :only => MOBILIZED
   
   #
   # GET /observations
@@ -88,15 +91,21 @@ class TaxaController < ApplicationController
           ).sort_by(&:id).reverse
         end
       end
+      format.mobile do
+        if @taxa.blank?
+          page = params[:page].to_i
+          page = 1 if page < 1
+          @taxon_photos = TaxonPhoto.paginate(:page => page, :per_page => 32, :order => "id DESC")
+          @taxa = Taxon.all(:conditions => ["id IN (?)", @taxon_photos.map{|tp| tp.taxon_id}])
+        end
+      end
       format.xml  do
         render(:xml => @taxa.to_xml(
           :include => :taxon_names, :methods => [:common_name]))
       end
       format.json do
-        render(
-          :json => @taxa.to_json(
-            :include => :taxon_names, 
-            :methods => [:common_name] ) )
+        @taxa = Taxon::ICONIC_TAXA if @taxa.blank? && params[:q].blank?
+        render :json => @taxa.to_json(Taxon.default_json_options)
       end
     end
   end
@@ -173,12 +182,22 @@ class TaxaController < ApplicationController
         end
         
         @taxon_range = @taxon.taxon_ranges.without_geom.first
-        @taxon_gbif = @taxon.name.gsub(' ','+')
+        @taxon_gbif = "#{@taxon.name.gsub(' ','+')}*"
         @show_range = @taxon_range
         @colors = @taxon.colors if @taxon.species_or_lower?
         
         render :action => 'show'
       end
+      
+      format.mobile do
+        if @taxon.species_or_lower? && @taxon.species
+          @siblings = @taxon.species.siblings.all(:limit => 100, :include => [:photos, :taxon_names]).sort_by{|t| t.name}
+          @siblings.delete_if{|s| s.id == @taxon.id}
+        else
+          @children = @taxon.children.all(:limit => 100, :include => [:photos, :taxon_names]).sort_by{|t| t.name}
+        end
+      end
+      
       format.xml do
         render :xml => @taxon.to_xml(
           :include => [:taxon_names, :iconic_taxon], 
@@ -363,9 +382,13 @@ class TaxaController < ApplicationController
         end
       end
       format.json do
-        render :json => @taxa.to_json(
-          :include => [:iconic_taxon, :taxon_names, :photos],
-          :methods => [:common_name, :image_url, :default_name])
+        options = Taxon.default_json_options
+        options[:include].merge!(
+          :iconic_taxon => {:only => [:id, :name]}, 
+          :taxon_names => {:only => [:id, :name, :lexicon]}
+        )
+        options[:methods] += [:common_name, :image_url, :default_name]
+        render :json => @taxa.to_json(options)
       end
     end
   end
@@ -420,10 +443,10 @@ class TaxaController < ApplicationController
                 :include => :taxon_names, :methods => [:common_name] )
       end
       format.json do
-        render(
-          :json => @taxon.children.to_json(
-            :include => :taxon_names, 
-            :methods => [:common_name] ) )
+        options = Taxon.default_json_options
+        options[:include].merge!(:taxon_names => {:only => [:id, :name, :lexicon]})
+        options[:methods] += [:common_name]
+        render :json => @taxon.children.all(:include => [{:taxon_photos => :photo}, :taxon_names]).to_json(options)
       end
     end
   end
@@ -442,7 +465,7 @@ class TaxaController < ApplicationController
       end[0..(limit-1)]
     rescue Timeout::Error => e
       Rails.logger.error "[ERROR #{Time.now}] Timeout: #{e}"
-      HoptoadNotifier.notify(e, :request => request, :session => session)
+      # HoptoadNotifier.notify(e, :request => request, :session => session)
       @photos = @taxon.photos
     end
     if params[:partial]
@@ -650,8 +673,12 @@ class TaxaController < ApplicationController
   end
   
   def update_photos
-    @taxon.photos = retrieve_photos
+    photos = retrieve_photos
+    @taxon.photos = photos
     @taxon.save
+    unless photos.count == 0
+      Taxon.send_later(:update_ancestor_photos, @taxon.id, photos.first.id, :dj_priority => 2)
+    end
     flash[:notice] = "Taxon photos updated!"
     redirect_to taxon_path(@taxon)
   rescue Errno::ETIMEDOUT
@@ -733,12 +760,14 @@ class TaxaController < ApplicationController
         "were imported from an external name provider."
     else
       begin
-        Ratatosk.graft(@taxon)
+        lineage = Ratatosk.graft(@taxon)
       rescue Timeout::Error => e
         @error_message = e.message
       rescue RatatoskGraftError => e
         @error_message = e.message
       end
+      @taxon.reload
+      @error_message = "Graft failed" unless @taxon.grafted?
     end
     
     respond_to do |format|
@@ -758,6 +787,20 @@ class TaxaController < ApplicationController
   
   def merge
     @keeper = Taxon.find_by_id(params[:taxon_id].to_i)
+    if @keeper && @keeper.id == @taxon.id
+      msg = "Failed to merge taxon #{@taxon.id} (#{@taxon.name}) into taxon #{@keeper.id} (#{@keeper.name}).  You can't merge a taxon with itself."
+      respond_to do |format|
+        format.html do
+          flash[:error] = msg
+          redirect_back_or_default(@taxon)
+          return
+        end
+        format.js do
+          render :text => msg, :status => :unprocessable_entity, :layout => false
+          return
+        end
+      end
+    end
     
     if request.post? && params[:commit] == "Merge"
       unless @keeper
@@ -796,8 +839,8 @@ class TaxaController < ApplicationController
       :conditions => "resolved = true AND flaggable_type = 'Taxon'",
       :order => "flags.id desc")
     life = Taxon.find_by_name('Life')
-    @ungrafted_roots = Taxon.roots.paginate(:conditions => ["id != ?", life], :page => 1, :per_page => 100)
-    @ungrafted =  (@ungrafted_roots + @ungrafted_roots.map{|ur| ur.descendants}).flatten
+    @ungrafted = Taxon.roots.paginate(:conditions => ["id != ?", life], 
+      :page => 1, :per_page => 100, :include => [:taxon_names])
   end
   
   def flickr_tagger    
@@ -816,7 +859,7 @@ class TaxaController < ApplicationController
         flickr_photo = FlickrPhoto.new_from_net_flickr(original)
         if flickr_photo && @taxon.blank?
           if @taxa = flickr_photo.to_taxa
-            @taxon = @taxa.sort_by(&:ancestry).last
+            @taxon = @taxa.sort_by{|t| t.ancestry || ''}.last
           end
         end
         flickr_photo
@@ -1031,15 +1074,15 @@ class TaxaController < ApplicationController
   def try_show(exception)
     raise exception if params[:action].blank?
     name, format = params[:action].split('_').join(' ').split('.')
-    request.format = format unless format.blank?
+    request.format = format if request.format.blank? && !format.blank?
     name = name.to_s.downcase
     
     # Try to look by its current unique name
     unless @taxon
       begin
         taxa = Taxon.all(:conditions => ["unique_name = ?", name], :limit => 2) unless @taxon
-      rescue ActiveRecord::StatementInvalid => e
-        raise e unless e.message =~ /invalid byte sequence/
+      rescue ActiveRecord::StatementInvalid, PGError => e
+        raise e unless e.message =~ /invalid byte sequence/ || e.message =~ /incomplete multibyte character/
         name = Iconv.iconv('UTF8', 'LATIN1', name).first
         taxa = Taxon.all(:conditions => ["unique_name = ?", name], :limit => 2)
       end
@@ -1215,7 +1258,7 @@ class TaxaController < ApplicationController
   def ensure_flickr_write_permission
     @provider_authorization = current_user.provider_authorizations.first(:conditions => {:provider_name => 'flickr'})
     if @provider_authorization.blank? || @provider_authorization.scope != 'write'
-      session[:return_to] = request.request_uri if request.get?
+      session[:return_to] = request.get? ? request.request_uri : request.env['HTTP_REFERER']
       redirect_to auth_url_for('flickr', :scope => 'write')
       return false
     end

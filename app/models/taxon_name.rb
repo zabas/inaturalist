@@ -36,6 +36,7 @@ class TaxonName < ActiveRecord::Base
     :HILIGAYNON          =>  'Hiligaynon',
     :ILOKANO             =>  'Ilokano',
     :ITALIAN             =>  'Italian',
+    :JAPANESE            =>  'Japanese',
     :KOREAN              =>  'Korean',
     :MALTESE             =>  'Maltese',
     :MAORI               =>  'Maori',
@@ -174,5 +175,14 @@ class TaxonName < ActiveRecord::Base
       taxon_names.reject {|tn| options[:iconic_taxa].include?(tn.taxon.iconic_taxon_id)}
     end
     taxon_names.detect{|tn| tn.is_valid?} || taxon_names.first
+  end
+  
+  def self.strip_author(name)
+    name = name.gsub(/\(.*?\)/, '')
+    name = name.gsub(/\[.*?\]/, '')
+    name = name.gsub(/[\w\.,]+\s+\d+.*/, '')
+    name = name.gsub(/\w[\.,]+.*/, '')
+    name = name.gsub(/\s+[A-Z].*/, '')
+    name
   end
 end

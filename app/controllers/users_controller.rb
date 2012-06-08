@@ -4,6 +4,17 @@ class UsersController < ApplicationController
     :show, :edit, :update, :relationships, :add_role, :remove_role]
   before_filter :ensure_user_is_current_user_or_admin, :only => [:edit, :update, :destroy]
   before_filter :admin_required, :only => [:suspend, :unsuspend, :curation]
+  before_filter :return_here, :only => [:index, :show, :relationships, :dashboard, :curation]
+  
+  MOBILIZED = [:show, :dashboard, :new, :create]
+  before_filter :unmobilized, :except => MOBILIZED
+  before_filter :mobilized, :only => MOBILIZED
+  
+  caches_action :dashboard,
+    :expires_in => 1.hour,
+    :cache_path => Proc.new {|c| c.send(:home_url, :user_id => c.instance_variable_get("@current_user").id)},
+    :if => Proc.new {|c| (c.params.keys - %w(action controller)).blank? }
+  cache_sweeper :user_sweeper, :only => [:update]
   
   def new
     @user = User.new
@@ -12,13 +23,26 @@ class UsersController < ApplicationController
   def create
     logout_keeping_session!
     @user = User.new(params[:user])
+    params[:user].each do |k,v|
+      if k =~ /^prefer/
+        params[:user].delete(k)
+      else
+        next
+      end
+      @user.send("#{k}=", v)
+    end
     @user.register! if @user && @user.valid?
     success = @user && @user.valid?
     if success && @user.errors.empty?
-      redirect_back_or_default('/')
-      flash[:notice] = "Thanks for signing up!  We're sending you an email with your activation code."
+      flash[:notice] = "Welcome to iNaturalist!  Please check for your confirmation email, but feel free to start cruising the site."
+      self.current_user = @user
+      @user.update_attribute(:last_ip, request.env['REMOTE_ADDR'])
+      redirect_back_or_default(dashboard_path)
     else
-      render :action => 'new'
+      respond_to do |format|
+        format.html { render :action => 'new' }
+        format.mobile { render :action => 'new' }
+      end
     end
   end
 
@@ -158,6 +182,11 @@ class UsersController < ApplicationController
         :per_page => 15,
         :include => {:taxon => [:photos, :taxon_names]}, :order => "listed_taxa.id desc")
     end
+    
+    respond_to do |format|
+      format.html
+      format.mobile
+    end
   end
   
   def relationships
@@ -174,6 +203,12 @@ class UsersController < ApplicationController
   def dashboard
     @announcement = Announcement.last(:conditions => [
       "placement = 'users/dashboard' AND ? BETWEEN \"start\" AND \"end\"", Time.now.utc])
+    
+    # if params[:test]
+      dashboard2
+      return
+    # end
+    
     @user = current_user
     @recently_commented = Observation.all(
       :include => [:comments, :user, :photos],
@@ -227,12 +262,86 @@ class UsersController < ApplicationController
       @id_please_observations += @commented_on
     end
     unless @id_please_observations.blank?
-      @id_please_observations = @id_please_observations.select(&:id_please?)
-      @id_please_observations = @id_please_observations.uniq.sort_by(&:id).reverse
+      @id_please_observations = @id_please_observations.select{|o| o.id_please?}
+      @id_please_observations = @id_please_observations.uniq.sort_by{|o| o.id}.reverse
+    end
+    
+    respond_to do |format|
+      format.html
+      format.json do
+        json = @updates.map do |u|
+          {
+            :subject_name => u.user.login,
+            :subject_image => u.user.icon.url(:small),
+            :verb => "added",
+            :object_name => u.activity_object.class.to_s.underscore.humanize.downcase,
+            :object_url => url_for(u.activity_object),
+            :object_image => activity_object_image_url(u)
+          }
+        end
+        render :json => json
+      end
+      format.mobile
     end
   end
   
+  def dashboard2
+    conditions = ["id < ?", params[:from].to_i] if params[:from]
+    updates = current_user.updates.all(:limit => 50, :order => "id DESC", 
+      :include => [:resource, :notifier, :subscriber, :resource_owner],
+      :conditions => conditions)
+    @updates = Update.load_additional_activity_updates(updates)
+    @update_cache = Update.eager_load_associates(@updates)
+    @grouped_updates = Update.group_and_sort(@updates, :update_cache => @update_cache, :hour_groups => true)
+    Update.user_viewed_updates(updates)
+    @month_observations = current_user.observations.all(:select => "id, observed_on",
+      :conditions => [
+        "EXTRACT(month FROM observed_on) = ? AND EXTRACT(year FROM observed_on) = ?",
+        Date.today.month, Date.today.year
+        ])
+    respond_to do |format|
+      format.html { render :dashboard2 }
+      format.mobile { render :dashboard2 }
+    end
+  end
+  
+  def updates_count
+    count = current_user.updates.unviewed.activity.count
+    session[:updates_count] = count
+    render :json => {:count => count}
+  end
+  
+  def new_updates
+    @updates = current_user.updates.unviewed.activity.all(
+      :include => [:resource, :notifier, :subscriber, :resource_owner],
+      :order => "id DESC",
+      :limit => 200
+    )
+    session[:updates_count] = 0
+    if @updates.blank?
+      @updates = current_user.updates.activity.all(
+        :include => [:resource, :notifier, :subscriber, :resource_owner],
+        :order => "id DESC",
+        :limit => 10,
+        :conditions => ["viewed_at > ?", 1.day.ago])
+    end
+    if @updates.blank?
+      @updates = current_user.updates.activity.all(:limit => 5, :order => "id DESC")
+    else
+      Update.user_viewed_updates(@updates)
+    end
+    @update_cache = Update.eager_load_associates(@updates)
+    @updates = @updates.sort_by{|u| u.created_at.to_i * -1}
+    render :layout => false
+  end
+  
   def edit
+    respond_to do |format|
+      format.html
+      format.json { render :json => @user.to_json(:except => [
+        :crypted_password, :salt, :old_preferences, :activation_code, 
+        :remember_token, :last_ip]) }
+    end
   end
 
   # this is the page that's shown after a new user is created via 3rd party provider_authorization
@@ -248,12 +357,15 @@ class UsersController < ApplicationController
     
     return add_friend unless params[:friend_id].blank?
     return remove_friend unless params[:remove_friend_id].blank?
-    return update_password unless params[:password].blank?
+    return update_password unless (params[:password].blank? && params[:commit] !~ /password/i)
     
-    # Update the preferences
-    @display_user.preferences ||= Preferences.new
-    if params[:user] && params[:user][:preferences]
-      @display_user.preferences.update_attributes(params[:user][:preferences])
+    params[:user].each do |k,v|
+      if k =~ /^prefer/
+        params[:user].delete(k)
+      else
+        next
+      end
+      @display_user.send("#{k}=", v)
     end
     
     # Nix the icon_url if an icon file was provided
@@ -273,14 +385,16 @@ class UsersController < ApplicationController
   end
   
   def curation
-    @user = User.find_by_id(params[:id].to_i)
-    @user ||= User.find_by_login(params[:id])
-    @user ||= User.find_by_email(params[:id])
-    if @user.blank? && !params[:id].blank?
-      flash[:error] = "Couldn't find a user matching #{params[:id]}"
-    end
-    if @user.blank?
+    if params[:id].blank?
       @users = User.paginate(:page => params[:page], :order => "id desc")
+      @comment_counts_by_user_id = Comment.count(:group => :user_id, :conditions => ["user_id IN (?)", @users])
+    else
+      @display_user = User.find_by_id(params[:id].to_i)
+      @display_user ||= User.find_by_login(params[:id])
+      @display_user ||= User.find_by_email(params[:id])
+      if @display_user.blank?
+        flash[:error] = "Couldn't find a user matching #{params[:id]}"
+      end
     end
   end
 
@@ -324,18 +438,18 @@ protected
   end
   
   def update_password
-    if current_user.authenticated?(params[:current_password])
-      current_user.password = params[:password]
-      current_user.password_confirmation = params[:password_confirmation]
-      begin
-        current_user.save!
-        flash[:notice] = 'Successfully changed your password.'
-      rescue ActiveRecord::RecordInvalid => e
-        flash[:error] = "Couldn't change your password: #{e}"
-        return redirect_to(edit_person_path(@user))
-      end
-    else
-      flash[:error] = "Couldn't change your password: is that really your current password?"
+    if params[:password].blank? || params[:password_confirmation].blank?
+      flash[:error] = "You must specify and confirm a new password."
+      return redirect_to(edit_person_path(@user))
+    end
+    
+    current_user.password = params[:password]
+    current_user.password_confirmation = params[:password_confirmation]
+    begin
+      current_user.save!
+      flash[:notice] = 'Successfully changed your password.'
+    rescue ActiveRecord::RecordInvalid => e
+      flash[:error] = "Couldn't change your password: #{e}"
       return redirect_to(edit_person_path(@user))
     end
     redirect_to(person_by_login_path(:login => current_user.login))
@@ -347,7 +461,7 @@ protected
       @user = User.find(params[:id])
     rescue
       @user = User.find_by_login(params[:id])
-      raise ActiveRecord::RecordNotFound if @user.nil?
+      render_404 if @user.blank?
     end
   end
   
@@ -362,6 +476,16 @@ protected
     @listed_taxa_counts = ListedTaxon.count(:conditions => ["list_id IN (?)", @users.map{|u| u.life_list_id}], 
       :group => :user_id)
     @post_counts = Post.count(:conditions => ["user_id IN (?)", @users], :group => :user_id)
+  end
+  
+  def activity_object_image_url(activity_stream)
+    o = activity_stream.activity_object
+    case o.class.to_s
+    when "Observation"
+      o.photos.first.try(:square_url)
+    when ""
+      nil
+    end
   end
     
 end

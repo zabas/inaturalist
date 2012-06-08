@@ -5,7 +5,7 @@ class LifeList < List
   before_validation :set_defaults
   after_create :add_taxa_from_observations
   
-  MAX_RELOAD_TRIES = 15
+  MAX_RELOAD_TRIES = 60
   
   #
   # Adds a taxon to this life list by creating a new blank obs of the taxon
@@ -30,7 +30,9 @@ class LifeList < List
   def refresh(options = {})
     if taxa = options[:taxa]
       # Find existing listed_taxa of these taxa to update
-      existing = ListedTaxon.all(:conditions => ["list_id = ? AND taxon_id IN (?)", self, taxa])
+      existing = ListedTaxon.all(
+        :include => [{:list => :rules}, {:taxon => :taxon_names}, :last_observation],
+        :conditions => ["list_id = ? AND taxon_id IN (?)", self, taxa])
       collection = []
       
       # Add new listed taxa for taxa not already on this list
@@ -46,7 +48,7 @@ class LifeList < List
         end.compact
         
         # Create new ListedTaxa for the taxa that aren't already in the list
-        collection = (taxa_ids - existing.map(&:taxon_id)).map do |taxon_id|
+        collection = (taxa_ids - existing.map{|e| e.taxon_id}).map do |taxon_id|
           listed_taxon = ListedTaxon.new(:list => self, :taxon_id => taxon_id)
           listed_taxon.skip_update = true
           listed_taxon
@@ -54,23 +56,47 @@ class LifeList < List
       end
       collection += existing
     else
-      collection = self.listed_taxa
+      collection = self.listed_taxa.all(:include => [{:list => :rules}, {:taxon => :taxon_names}, :last_observation])
     end
 
-    collection.each do |listed_taxon|
-      # re-apply list rules to the listed taxa
-      unless listed_taxon.save
-        logger.debug "[DEBUG] #{listed_taxon} wasn't valid in #{self}, so " + 
-          "it's being destroyed: #{listed_taxon.errors.full_messages.to_sentence}"
-        listed_taxon.destroy
-      end
-      
-      if options[:destroy_unobserved] && 
-          listed_taxon.last_observation.try(:taxon_id) != listed_taxon.taxon_id
-        listed_taxon.destroy
+    collection.each do |lt|
+      lt.skip_update_cache_columns = options[:skip_update_cache_columns]
+      lt.skip_update = options[:skip_update]
+      lt.save
+      if !lt.valid? || (lt.first_observation_id.blank? && lt.last_observation_id.blank? && !lt.manually_added?)
+        lt.destroy
       end
     end
     true
+  end
+  
+  def self.create_new_listed_taxa_for_refresh(taxon, listed_taxa, target_list_ids)
+    new_list_ids = target_list_ids - listed_taxa.map{|lt| lt.taxon_id == taxon.id ? lt.list_id : nil}
+    new_taxa = [taxon, taxon.species].compact
+    new_list_ids.each do |list_id|
+      new_taxa.each do |new_taxon|
+        lt = ListedTaxon.new(:list_id => list_id, :taxon_id => new_taxon.id)
+        lt.skip_update = true
+        unless lt.save
+          Rails.logger.info "[INFO #{Time.now}] Failed to create #{lt}: #{lt.errors.full_messages.to_sentence}"
+        end
+      end
+    end
+  end
+  
+  def self.refresh_listed_taxon(lt)
+    unless lt.save
+      lt.destroy
+      return
+    end
+    if lt.first_observation_id.blank? && lt.last_observation_id.blank? && !lt.manually_added?
+      lt.destroy
+    end
+  end
+  
+  def self.refresh_with_observation_lists(observation, options = {})
+    user = observation.try(:user) || User.find_by_id(options[:user_id])
+    user ? user.life_list_ids : []
   end
   
   # Add all the taxa the list's owner has observed.  Cache the job ID so we 
@@ -83,6 +109,10 @@ class LifeList < List
   
   def add_taxa_from_observations_key
     "add_taxa_from_observations_job_#{id}"
+  end
+  
+  def rule_taxon
+    rules.detect{|r| r.operator == 'in_taxon?'}.try(:operand)
   end
   
   def self.add_taxa_from_observations(list, options = {})
@@ -104,22 +134,13 @@ class LifeList < List
     end
   end
   
-  # def self.remove_unobserved(list, options = {})
-  #   list.listed_taxa.find_each(:include => :last_observation) do |listed_taxon|
-  #     if listed_taxon.last_observation.blank? || listed_taxon.taxon_id != listed_taxon.last_observation.taxon_id
-  #       listed_taxon.destroy
-  #     end
-  #   end
-  # end
-  
   def self.update_life_lists_for_taxon(taxon)
-    ListRule.find_each(:include => :list, :conditions => [
+    ListRule.do_in_batches(:include => :list, :conditions => [
       "operator LIKE 'in_taxon%' AND operand_type = ? AND operand_id IN (?)", 
-      Taxon.to_s, taxon.self_and_ancestors.map(&:id)
+      Taxon.to_s, [taxon.id, taxon.ancestor_ids].flatten.compact
     ]) do |list_rule|
       next unless list_rule.list.is_a?(LifeList)
-      LifeList.send_later(:add_taxa_from_observations, list_rule.list, 
-        :taxa => [taxon.id])
+      LifeList.send_later(:add_taxa_from_observations, list_rule.list, :taxa => [taxon.id], :dj_priority => 1)
     end
   end
   
@@ -139,16 +160,24 @@ class LifeList < List
   end
   
   def self.repair_observed(list)
-    list.listed_taxa.find_each(:include => :last_observation, 
-        :conditions => "observations.id IS NOT NULL AND observations.taxon_id != listed_taxa.taxon_id") do |lt|
+    ListedTaxon.do_in_batches(
+        :include => :last_observation, 
+        :conditions => [
+          "list_id = ? AND observations.id IS NOT NULL AND observations.taxon_id != listed_taxa.taxon_id",
+          list.id]) do |lt|
       lt.destroy
     end
   end
   
   private
   def set_defaults
-    self.title ||= "%s's Life List" % owner_name
-    self.description ||= "Every species seen by #{owner_name}"
+    if title.blank?
+      self.title = "%s's Life List" % owner_name
+      self.title += " of #{rule_taxon.default_name.name}" if rule_taxon
+    end
+    if description.blank? && rule_taxon.blank?
+      self.description = "Every species seen by #{owner_name}"
+    end
     true
   end
 end

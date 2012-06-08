@@ -12,6 +12,11 @@ class ListedTaxaController < ApplicationController
   def show
     respond_to do |format|
       format.html do
+        if !@list.is_a?(CheckList)
+          @photo = @listed_taxon.first_observation.photos.first if @listed_taxon.first_observation
+          @photo ||= @listed_taxon.last_observation.photos.first if @listed_taxon.last_observation
+        end
+        @photo ||= @listed_taxon.taxon.taxon_photos.first(:order => "id ASC").try(:photo)
         if partial = params[:partial]
           partial = "lists/listed_taxon" unless SHOW_PARTIALS.include?(partial)
           render :partial => partial, :layout => false
@@ -34,12 +39,27 @@ class ListedTaxaController < ApplicationController
     end
     @list ||= @place.check_list if @place
     
-    unless @list && @list.editable_by?(current_user)
-      flash[:notice] = "Sorry, you don't have permission to add to this list."
-      return redirect_to lists_path
+    unless @list && @list.listed_taxa_editable_by?(current_user)
+      msg = "Sorry, you don't have permission to add to this list."
+      respond_to do |format|
+        format.html do
+          flash[:notice] = msg
+          redirect_to lists_path
+        end
+        format.json do
+          render :json => {
+              :object => @listed_taxon,
+              :errors => msg,
+              :full_messages => msg
+            },
+            :status => :unprocessable_entity,
+            :status_text => msg
+        end
+      end
+      return
     end
     
-    @listed_taxon = @list.add_taxon(@taxon, :user_id => current_user.id) if @taxon
+    @listed_taxon = @list.add_taxon(@taxon, :user_id => current_user.id, :manually_added => true)
     
     respond_to do |format|
       format.html do
@@ -103,8 +123,7 @@ class ListedTaxaController < ApplicationController
   def destroy
     @listed_taxon = ListedTaxon.find_by_id(params[:id], :include => :list)
     
-    unless @listed_taxon && @listed_taxon.list.editable_by?(current_user) && 
-        @listed_taxon.removable_by?(current_user)
+    unless @listed_taxon && @listed_taxon.removable_by?(current_user)
       flash[:notice] = "Sorry, you don't have permission to delete from " + 
         "this list."
       return redirect_to lists_path
@@ -138,7 +157,7 @@ class ListedTaxaController < ApplicationController
   private
   
   def load_listed_taxon
-    unless @listed_taxon = ListedTaxon.find_by_id(params[:id], :include => [:list, :taxon, :user])
+    unless @listed_taxon = ListedTaxon.find_by_id(params[:id].to_i, :include => [:list, :taxon, :user])
       flash[:notice] = "That listed taxon doesn't exist."
       redirect_back_or_default('/')
       return

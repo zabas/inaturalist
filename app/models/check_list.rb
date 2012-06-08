@@ -8,6 +8,7 @@ class CheckList < List
   
   before_validation :set_title
   before_create :set_last_synced_at, :create_taxon_list_rule
+  after_save :mark_non_comprehensive_listed_taxa_as_absent
   
   validates_presence_of :place_id
   validates_uniqueness_of :taxon_id, :scope => :place_id, :allow_nil => true,
@@ -17,7 +18,14 @@ class CheckList < List
   # validates_uniqueness_of :taxon_id, :scope => :place_id
   
   def editable_by?(user)
-    user && (self.user.blank? || self.user == user || user.is_curator?)
+    user && (self.user == user || user.is_curator?)
+  end
+  
+  def listed_taxa_editable_by?(user)
+    return false if user.blank?
+    return true if self.user == user || user.is_curator?
+    return false if comprehensive?
+    true
   end
   
   def owner_name
@@ -76,6 +84,11 @@ class CheckList < List
     Rails.logger.info "[INFO #{Time.now}] Finished syncing check list #{id} with parent #{parent_check_list.id}"
   end
   
+  def add_taxon(taxon, options = {})
+    options[:place_id] = place_id
+    super(taxon, options)
+  end
+  
   # This is a loaded gun.  Please fire with discretion.
   def add_intersecting_taxa(options = {})
     return nil unless PlaceGeometry.exists?(["place_id = ?", place_id])
@@ -92,11 +105,31 @@ class CheckList < List
     end
   end
   
+  def add_observed_taxa
+    options = {
+      :select => "DISTINCT ON (observations.taxon_id) observations.*",
+      :order => "observations.taxon_id",
+      :include => [:taxon, :user],
+      :joins => "JOIN place_geometries ON place_geometries.place_id = #{place_id}",
+      :conditions => [
+        "observations.quality_grade = ? AND " +
+        "(" +
+          "(observations.private_latitude IS NULL AND ST_Intersects(place_geometries.geom, observations.geom)) OR " +
+          "(observations.private_latitude IS NOT NULL AND ST_Intersects(place_geometries.geom, ST_Point(observations.private_longitude, observations.private_latitude)))" +
+        ")",
+        Observation::RESEARCH_GRADE
+      ]
+    }
+    Observation.do_in_batches(options) do |o|
+      add_taxon(o.taxon)
+    end
+  end
+  
   def cache_columns_query_for(lt)
     lt = ListedTaxon.find_by_id(lt) unless lt.is_a?(ListedTaxon)
     return nil unless lt
     sql_key = "EXTRACT(month FROM observed_on) || substr(quality_grade,1,1)"
-    ancestry_clause = [lt.taxon_ancestor_ids, lt.taxon_id].map{|i| i.blank? ? nil : i}.compact.join('/')
+    ancestry_clause = [lt.taxon_ancestor_ids, lt.taxon_id].flatten.map{|i| i.blank? ? nil : i}.compact.join('/')
     <<-SQL
       SELECT
         array_agg(CASE WHEN quality_grade = 'research' THEN o.id END) AS ids,
@@ -124,6 +157,46 @@ class CheckList < List
         )
       GROUP BY #{sql_key}
     SQL
+  end
+  
+  def mark_non_comprehensive_listed_taxa_as_absent
+    return true unless comprehensive_changed?
+    return true unless comprehensive?
+    ancestry = [taxon.ancestry, taxon.id].compact.join('/')
+    conditions = [
+      "place_id = ? AND list_id != ? AND (taxon_ancestor_ids = ? OR taxon_ancestor_ids LIKE ?)", 
+      place_id, id, ancestry, "#{ancestry}/%"
+    ]
+    that = self
+    ListedTaxon.do_in_batches(:conditions => conditions) do |lt|
+      next if that.listed_taxa.exists?(:taxon_id => lt.taxon_id)
+      ListedTaxon.update_all(["occurrence_status_level = ?", ListedTaxon::ABSENT], "id = #{lt.id}")
+    end
+    true
+  end
+  
+  def refresh(options = {})
+    find_options = {}
+    if taxa = options[:taxa]
+      find_options[:conditions] = ["list_id = ? AND taxon_id IN (?)", self.id, taxa]
+    else
+      find_options[:conditions] = ["list_id = ?", self.id]
+    end
+    
+    ListedTaxon.do_in_batches(find_options) do |listed_taxon|
+      listed_taxon.skip_update_cache_columns = options[:skip_update_cache_columns]
+      # re-apply list rules to the listed taxa
+      listed_taxon.force_update_cache_columns = true
+      listed_taxon.save
+      if !listed_taxon.valid?
+        logger.debug "[DEBUG] #{listed_taxon} wasn't valid, so it's being " +
+          "destroyed: #{listed_taxon.errors.full_messages.join(', ')}"
+        listed_taxon.destroy
+      elsif listed_taxon.auto_removable_from_check_list?
+        listed_taxon.destroy
+      end
+    end
+    true
   end
   
   def self.sync_check_lists_with_parents(options = {})
@@ -155,14 +228,18 @@ class CheckList < List
     taxon_ids = CheckList.get_taxon_ids_to_refresh(observation, options)
     return if taxon_ids.blank?
     Rails.logger.info "[INFO #{Time.now}] refresh_with_observation #{observation_id}, taxon_ids: #{taxon_ids.inspect}"
+    
     current_place_ids = CheckList.get_current_place_ids_to_refresh(observation, options)
     Rails.logger.info "[INFO #{Time.now}] refresh_with_observation #{observation_id}, current_place_ids: #{current_place_ids.inspect}"
+    
     current_listed_taxa = ListedTaxon.all(:conditions => ["place_id IN (?) AND taxon_id IN (?)", current_place_ids, taxon_ids])
     current_listed_taxa_of_this_taxon = current_listed_taxa.select{|lt| lt.taxon_id == observation.taxon_id}
     new_place_ids = current_place_ids - current_listed_taxa_of_this_taxon.map{|lt| lt.place_id}
     Rails.logger.info "[INFO #{Time.now}] refresh_with_observation #{observation_id}, new_place_ids: #{new_place_ids.inspect}"
+    
     old_place_ids = CheckList.get_old_place_ids_to_refresh(observation, options)
     Rails.logger.info "[INFO #{Time.now}] refresh_with_observation #{observation_id}, old_place_ids: #{old_place_ids.inspect}"
+    
     old_listed_taxa = ListedTaxon.all(:conditions => ["place_id IN (?) AND taxon_id IN (?)", old_place_ids - current_place_ids, taxon_ids])
     listed_taxa = (current_listed_taxa + old_listed_taxa).compact.uniq
     unless listed_taxa.blank?
@@ -170,6 +247,9 @@ class CheckList < List
       listed_taxa.each do |lt|
         lt.force_update_cache_columns = true
         lt.save # sets all observation associates, months stats, etc.
+        unless lt.valid?
+          Rails.logger.error "[ERROR #{Time.now}] Couldn't save #{lt}: #{lt.errors.full_messages.to_sentence}"
+        end
         if lt.auto_removable_from_check_list? && !options[:new]
           lt.destroy
         end
@@ -233,9 +313,10 @@ class CheckList < List
   end
   
   def self.add_new_listed_taxa(taxon, new_place_ids)
-    CheckList.find_each(:joins => "JOIN places ON places.check_list_id = lists.id", 
-        :conditions => ["place_id IN (?)", new_place_ids]) do |list|
+    CheckList.all(:joins => "JOIN places ON places.check_list_id = lists.id", 
+        :conditions => ["place_id IN (?)", new_place_ids]).each do |list|
       list.add_taxon(taxon, :force_update_cache_columns => true)
+      list.add_taxon(taxon.species, :force_update_cache_columns => true) if taxon.rank_level < Taxon::SPECIES_LEVEL
     end
   end
 end

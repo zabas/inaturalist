@@ -7,6 +7,9 @@ class ListedTaxon < ActiveRecord::Base
   acts_as_activity_streamable :batch_window => 30.minutes, 
     :batch_partial => "lists/listed_taxa_activity_stream_batch",
     :user_scope => :by_user
+  
+  has_subscribers
+  
   belongs_to :list
   belongs_to :taxon, :counter_cache => true
   belongs_to :first_observation,
@@ -34,7 +37,6 @@ class ListedTaxon < ActiveRecord::Base
   before_save :set_source_id
   after_save :update_cache_columns_for_check_list
   after_save :expire_caches
-  after_save :set_comprehensive_on_descendants
   after_create :update_user_life_list_taxa_count
   after_create :sync_parent_check_list
   after_create :delta_index_taxon
@@ -68,20 +70,28 @@ class ListedTaxon < ActiveRecord::Base
   ORDERS = [ALPHABETICAL_ORDER, TAXONOMIC_ORDER]
   OCCURRENCE_STATUS_LEVELS = {
     60 => "present",
-    # 50 => "common",
-    # 40 => "uncommon",
-    # 30 => "irregular",
-    # 20 => "doubtful",
+    50 => "common",
+    40 => "uncommon",
+    30 => "irregular",
+    20 => "doubtful",
     10 => "absent"
   }
   OCCURRENCE_STATUSES = OCCURRENCE_STATUS_LEVELS.values
   OCCURRENCE_STATUS_DESCRIPTIONS = ActiveSupport::OrderedHash.new
   OCCURRENCE_STATUS_DESCRIPTIONS["present" ] =  "occurs in the area"
-  # OCCURRENCE_STATUS_DESCRIPTIONS["common" ] =  "occurs frequently"
-  # OCCURRENCE_STATUS_DESCRIPTIONS["uncommon" ] =  "occurs regularly, but in small numbers; requires careful searching of proper habitat" 
-  # OCCURRENCE_STATUS_DESCRIPTIONS["irregular" ] =  "presence unpredictable, including vagrants; may be common in some years and absent others"
-  # OCCURRENCE_STATUS_DESCRIPTIONS["doubtful" ] =  "presumed to occur, but doubt exists over the evidence"
+  OCCURRENCE_STATUS_DESCRIPTIONS["common" ] =  "occurs frequently"
+  OCCURRENCE_STATUS_DESCRIPTIONS["uncommon" ] =  "occurs regularly, but in small numbers; requires careful searching of proper habitat" 
+  OCCURRENCE_STATUS_DESCRIPTIONS["irregular" ] =  "presence unpredictable, including vagrants; may be common in some years and absent others"
+  OCCURRENCE_STATUS_DESCRIPTIONS["doubtful" ] =  "presumed to occur, but doubt exists over the evidence"
   OCCURRENCE_STATUS_DESCRIPTIONS["absent" ] =  "does not occur in the area"
+  
+  OCCURRENCE_STATUS_LEVELS.each do |level, name|
+    const_set name.upcase, level
+    define_method "#{name}?" do
+      level == occurrence_status_level
+    end
+  end
+  PRESENT_EQUIVALENTS = [PRESENT, COMMON, UNCOMMON]
   
   ESTABLISHMENT_MEANS = %w(native endemic introduced naturalised invasive managed)
   ESTABLISHMENT_MEANS_DESCRIPTIONS = ActiveSupport::OrderedHash.new
@@ -92,13 +102,23 @@ class ListedTaxon < ActiveRecord::Base
   ESTABLISHMENT_MEANS_DESCRIPTIONS["invasive"] = "has a deleterious impact on another organism, multiple organisms, or the ecosystem as a whole"
   ESTABLISHMENT_MEANS_DESCRIPTIONS["managed"] = "maintains presence through intentional cultivation or husbandry"
   
+  ESTABLISHMENT_MEANS.each do |means|
+    const_set means.upcase, means
+    define_method "#{means}?" do
+      establishment_means == means
+    end
+  end
+  
   NATIVE_EQUIVALENTS = %w(native endemic)
   INTRODUCED_EQUIVALENTS = %w(introduced naturalised invasive managed)
   
   validates_inclusion_of :occurrence_status_level, :in => OCCURRENCE_STATUS_LEVELS.keys, :allow_blank => true
   validates_inclusion_of :establishment_means, :in => ESTABLISHMENT_MEANS, :allow_blank => true, :allow_nil => true
+  validate_on_create :not_on_a_comprehensive_check_list
+  validate :absent_only_if_not_confirming_observations
+  validate :preserve_absense_if_not_on_a_comprehensive_list
   
-  CHECK_LIST_FIELDS = %w(place_id occurrence_status establishment_means comprehensive)
+  CHECK_LIST_FIELDS = %w(place_id occurrence_status establishment_means)
   
   attr_accessor :skip_sync_with_parent,
                 :skip_update_cache_columns,
@@ -113,6 +133,10 @@ class ListedTaxon < ActiveRecord::Base
     "list_id: #{self.list_id}>"
   end
   
+  def to_plain_s
+    "#{taxon.default_name.name} on #{list.title}"
+  end
+  
   def validate
     # don't bother if validates_presence_of(:taxon) has already failed
     if errors.on(:taxon).blank?
@@ -121,13 +145,13 @@ class ListedTaxon < ActiveRecord::Base
       end
     end
     
-    if last_observation && !(taxon == last_observation.taxon || last_observation.taxon.in_taxon?(taxon))
+    if last_observation && !(taxon_id == last_observation.taxon_id || taxon.ancestor_of?(last_observation.taxon) || last_observation.taxon.ancestor_of?(taxon))
       errors.add(:taxon_id, "must be the same as the last observed taxon, #{last_observation.taxon.try(:to_plain_s)}")
     end
     
     if list.is_a?(CheckList)
-      if list.user && user && user != list.user && !user.is_curator?
-        errors.add(:user_id, "must be the list creator or a curator")
+      if (list.comprehensive? || list.user) && user && user != list.user && !user.is_curator?
+        errors.add(:user, "must be the list creator or a curator")
       end
     else
       CHECK_LIST_FIELDS.each do |field|
@@ -136,22 +160,59 @@ class ListedTaxon < ActiveRecord::Base
     end
   end
   
+  def not_on_a_comprehensive_check_list
+    return true unless list.is_a?(CheckList)
+    return true if first_observation_id || last_observation_id
+    target_place = place || list.place
+    return true unless existing_comprehensive_list
+    unless existing_comprehensive_listed_taxon
+      errors.add(:taxon_id, "isn't on the comprehensive list \"#{existing_comprehensive_list.title}\"")
+    end
+    true
+  end
+  
+  def existing_comprehensive_list
+    return nil unless list.is_a?(CheckList)
+    return @existing_comprehensive_list unless @existing_comprehensive_list.blank?
+    places = [self.place || list.place]
+    while !places.last.nil? do
+      places << places.last.parent
+    end
+    places.compact!
+    @existing_comprehensive_list = CheckList.first(:conditions => [
+      "comprehensive = 't' AND id != ? AND taxon_id IN (?) AND place_id IN (?)", 
+      list_id, taxon.ancestor_ids, places])
+  end
+  
+  def existing_comprehensive_listed_taxon
+    return nil unless existing_comprehensive_list
+    @existing_listed_taxon ||= existing_comprehensive_list.listed_taxa.first(:conditions => ["taxon_id = ?", taxon_id])
+  end
+  
+  def absent_only_if_not_confirming_observations
+    return true unless occurrence_status_level_changed?
+    return true unless absent?
+    if first_observation || last_observation
+      errors.add(:occurrence_status_level, "can't be absent if there are confirming observations")
+    end
+    true
+  end
+  
+  def preserve_absense_if_not_on_a_comprehensive_list
+    return true unless occurrence_status_level_changed?
+    return true if absent?
+    return true unless existing_comprehensive_list
+    return true if existing_comprehensive_listed_taxon
+    errors.add(:occurrence_status_level, "can't be changed from absent if this taxon is not on the comprehensive list of #{existing_comprehensive_list.taxon.name}")
+    true
+  end
+  
   def set_ancestor_taxon_ids
     unless taxon.ancestry.blank?
       self.taxon_ancestor_ids = taxon.ancestry
     else
       self.taxon_ancestor_ids = '' # this should probably be in the db...
     end
-    true
-  end
-  
-  def set_comprehensive_on_descendants
-    return true unless comprehensive_changed?
-    ListedTaxon.update_all(
-      ["comprehensive = ?", comprehensive],
-      ["list_id = ? AND (taxon_ancestor_ids = ? OR taxon_ancestor_ids LIKE ?)", 
-        list_id, "#{ancestry}/#{taxon_id}", "#{ancestry}/#{taxon_id}/%"]
-    )
     true
   end
   
@@ -194,14 +255,13 @@ class ListedTaxon < ActiveRecord::Base
   end
   
   def delta_index_taxon
-    taxon.delta = true
-    taxon.save
+    Taxon.update_all(["delta = ?", true], ["id = ?", taxon_id])
     true
   end
   
   def update_cache_columns
     return true if @skip_update_cache_columns
-    return true if list.is_a?(CheckList)
+    return true if list.is_a?(CheckList) && (!@force_update_cache_columns || place_id.blank?)
     set_cache_columns
     true
   end
@@ -212,8 +272,9 @@ class ListedTaxon < ActiveRecord::Base
   
   def update_cache_columns_for_check_list
     return true if @skip_update_cache_columns
+    return true unless list.is_a?(CheckList)
     if @force_update_cache_columns
-      ListedTaxon.update_cache_columns_for(self)
+      # this should have already happened in update_cache_columns
     else
       ListedTaxon.send_later(:update_cache_columns_for, id, :dj_priority => 1)
     end
@@ -297,15 +358,17 @@ class ListedTaxon < ActiveRecord::Base
     OCCURRENCE_STATUS_LEVELS[occurrence_status_level]
   end
   
-  def editable_by?(user)
-    list.editable_by?(user)
+  def editable_by?(target_user)
+    list.editable_by?(target_user)
   end
   
-  def removable_by?(user)
-    return false unless user
-    return true if user.admin?
+  def removable_by?(target_user)
+    return false unless target_user
+    return true if user == target_user
+    return true if list.is_a?(CheckList) && target_user.admin?
+    return true if list.is_a?(ProjectList) && list.project.curated_by?(target_user)
     return true if citation_object.blank?
-    citation_object == user
+    citation_object == target_user
   end
   
   def citation_object
@@ -334,6 +397,14 @@ class ListedTaxon < ActiveRecord::Base
   
   def endemic?
     establishment_means == "endemic"
+  end
+  
+  def taxon_name
+    taxon.name
+  end
+  
+  def user_login
+    user.try(:login)
   end
   
   # Update the taxon_ancestors of ALL listed_taxa. Note this will be

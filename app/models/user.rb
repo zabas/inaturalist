@@ -66,8 +66,8 @@ class User < ActiveRecord::Base
   
   has_attached_file :icon, 
     :styles => { :medium => "300x300>", :thumb => "48x48#", :mini => "16x16#" },
-    :path => ":rails_root/public/attachments/:class/:attachment/:id/:style/:basename.:extension",
-    :url => "/attachments/:class/:attachment/:id/:style/:basename.:extension",
+    :path => ":rails_root/public/attachments/:class/:attachment/:id-:style.:icon_type_extension",
+    :url => "/attachments/:class/:attachment/:id-:style.:icon_type_extension",
     :default_url => "/attachment_defaults/:class/:attachment/defaults/:style.png"
 
   # Roles
@@ -78,7 +78,10 @@ class User < ActiveRecord::Base
   after_destroy :create_deleted_user
               
   validates_presence_of     :login
-  validates_length_of       :login,    :within => 3..40
+  
+  MIN_LOGIN_SIZE = 3
+  MAX_LOGIN_SIZE = 40
+  validates_length_of       :login,    :within => MIN_LOGIN_SIZE..MAX_LOGIN_SIZE
   validates_uniqueness_of   :login
   validates_format_of       :login,    :with => Authentication.login_regex, :message => Authentication.bad_login_message
 
@@ -98,38 +101,54 @@ class User < ActiveRecord::Base
   # anything else you want your user to change should be added here.
   attr_accessible :login, :email, :name, :password, :password_confirmation, :icon, :description, :time_zone, :icon_url
   
-  # set user.skip_email_validation = true if you want to, um, skip email validation before creating+saving
-  attr_accessor :skip_email_validation
-  attr_accessor :skip_registration_email
-  
   named_scope :order, Proc.new { |sort_by, sort_dir|
     sort_dir ||= 'DESC'
     {:order => ("%s %s" % [sort_by, sort_dir])}
   }
   
-  def self.query(params={}) 
-    scope = self.scoped({})
-    if params[:sort_by] && params[:sort_dir]
-      scope.order(params[:sort_by], params[:sort_dir])
-    elsif params[:sort_by]
-      params.order(query[:sort_by])
-    end
-    scope
+  def icon_url_provided?
+    !self.icon_url.blank?
+  end
+
+  def download_remote_icon
+    io = open(URI.parse(self.icon_url))
+    self.icon = (io.base_uri.path.split('/').last.blank? ? nil : io)
+    rescue # catch url errors with validations instead of exceptions (Errno::ENOENT, OpenURI::HTTPError, etc...)
   end
   
-  
+  def whitelist_licenses
+    unless preferred_observation_license.blank? || Observation::LICENSE_CODES.include?(preferred_observation_license)
+      self.preferred_observation_license = nil
+    end
+    
+    unless preferred_photo_license.blank? || Observation::LICENSE_CODES.include?(preferred_photo_license)
+      self.preferred_photo_license = nil
+    end
+    true
+  end
 
-  # Authenticates a user by their login name and unencrypted password.  Returns the user or nil.
-  #
-  # uff.  this is really an authorization, not authentication routine.  
-  # We really need a Dispatch Chain here or something.
-  # This will also let us return a human error message.
-  #
-  def self.authenticate(login, password)
-    return nil if login.blank? || password.blank?
-    u = find_in_state :first, :active, :conditions => {:login => login}
-    u = find_in_state :first, :active, :conditions => {:email => login} if u.nil?
-    u && u.authenticated?(password) ? u : nil
+  # add a provider_authorization to this user.  
+  # auth_info is the omniauth info from rack.
+  def add_provider_auth(auth_info)
+    provider_auth_info = {
+      :provider_name => auth_info['provider'], 
+      :provider_uid => auth_info['uid']
+    }
+    unless auth_info["credentials"].nil? # open_id (google, yahoo, etc) doesn't provide a token
+      provider_auth_info.merge!({ :token => (auth_info["credentials"]["token"] || auth_info["credentials"]["secret"]) }) 
+    end
+    pa = self.provider_authorizations.build(provider_auth_info) 
+    pa.auth_info = auth_info
+    pa.save
+    pa
+  end
+
+  # test to see if this user has authorized with the given provider
+  # argument is one of: 'facebook', 'twitter', 'google', 'yahoo'
+  # returns either nil or the appropriate ProviderAuthorization
+  def has_provider_auth(provider)
+    provider = provider.downcase
+    provider_authorizations.all.select{|p| (p.provider_name == provider || p.provider_uid.match(provider))}.first
   end
 
   def login=(value)
@@ -184,7 +203,138 @@ class User < ActiveRecord::Base
     friends.exists?(user)
   end
 
+  def facebook_token
+    facebook_identity.try(:token)
+  end
+  
+  def update_observation_licenses
+    return true unless [true, "1", "true"].include?(@make_observation_licenses_same)
+    Observation.update_all(["license = ?", preferred_observation_license], ["user_id = ?", id])
+    true
+  end
+  
+  def update_photo_licenses
+    return true unless [true, "1", "true"].include?(@make_photo_licenses_same)
+    number = Photo.license_number_for_code(preferred_photo_license)
+    return true unless number
+    Photo.update_all(["license = ?", number], ["user_id = ?", id])
+    true
+  end
+  
+  def update_attributes(attributes)
+    MASS_ASSIGNABLE_ATTRIBUTES.each do |a|
+      self.send("#{a}=", attributes.delete(a.to_s)) if attributes.has_key?(a.to_s)
+      self.send("#{a}=", attributes.delete(a)) if attributes.has_key?(a)
+    end
+    super(attributes)
+  end
+  
+  def merge(reject)
+    raise "Can't merge a user with itself" if reject.id == id
+    life_list_taxon_ids_to_move = reject.life_list.taxon_ids - life_list.taxon_ids
+    ListedTaxon.update_all(
+      ["list_id = ?", life_list_id],
+      ["list_id = ? AND taxon_id IN (?)", reject.life_list_id, life_list_taxon_ids_to_move]
+    )
+    reject.friendships.all(:conditions => ["friend_id = ?", id]).each{|f| f.destroy}
+    merge_has_many_associations(reject)
+    reject.destroy
+    LifeList.send_later(:reload_from_observations, life_list_id)
+  end
+  
+  def self.query(params={}) 
+    scope = self.scoped({})
+    if params[:sort_by] && params[:sort_dir]
+      scope.order(params[:sort_by], params[:sort_dir])
+    elsif params[:sort_by]
+      params.order(query[:sort_by])
+    end
+    scope
+  end
+  
+  # Authenticates a user by their login name and unencrypted password.  Returns the user or nil.
+  def self.authenticate(login, password)
+    return nil if login.blank? || password.blank?
+    u = find_in_state :first, :active, :conditions => ["lower(login) = ?", login.downcase]
+    u ||= find_in_state :first, :active, :conditions => {:email => login}
+    u ||= find_in_state :first, :pending, :conditions => ["lower(login) = ?", login.downcase]
+    u ||= find_in_state :first, :pending, :conditions => {:email => login}
+    u && u.authenticated?(password) ? u : nil
+  end
+
+  # create a user using 3rd party provider credentials (via omniauth)
+  # note that this bypasses validation and immediately activates the new user
+  # see https://github.com/intridea/omniauth/wiki/Auth-Hash-Schema for details of auth_info data
+  def self.create_from_omniauth(auth_info)
+    email = (auth_info["user_info"]["email"] || auth_info["extra"]["user_hash"]["email"])
+    # see if there's an existing inat user with this email. if so, just link the accounts and return the existing user.
+    if email && u = User.find_by_email(email)
+      u.add_provider_auth(auth_info)
+      return u
+    end
+    autogen_login = User.suggest_login(
+      auth_info["user_info"]["nickname"] || 
+      auth_info["user_info"]["first_name"] || 
+      auth_info["user_info"]["name"])
+    autogen_login = User.suggest_login(email.split('@').first) if autogen_login.blank? && !email.blank?
+    autogen_login = User.suggest_login('naturalist') if autogen_login.blank?
+    autogen_pw = ActiveSupport::SecureRandom.base64(6) # autogenerate a random password (or else validation fails)
+    u = User.new(
+      :login => autogen_login,
+      :email => email,
+      :name => auth_info["user_info"]["name"],
+      :password => autogen_pw,
+      :password_confirmation => autogen_pw,
+      :icon_url => auth_info["user_info"]["image"]
+    )
+    if u
+      u.skip_email_validation = true
+      u.skip_registration_email = true
+      begin
+        u.register!
+        u.activate!
+      rescue ActiveRecord::StatementInvalid => e
+        raise e unless e.message =~ /unique constraint/
+        suggestion = User.suggest_login(u.login)
+        Rails.logger.info "[INFO #{Time.now}] unique violation on #{u.login}, suggested login: #{suggestion}"
+        u.login = suggestion
+        u.register! unless u.pending?
+        u.activate!
+      end
+      u.add_provider_auth(auth_info)
+      # TODO: do something useful with location?  -> time zone, perhaps
+    end
+    u
+  end
+  
   protected
+
+  # given a requested login, will try to find existing users with that login
+  # and suggest handle2, handle3, handle4, etc if the login's taken
+  # to prevent namespace clashes (e.g. i register with twitter @joe but 
+  # there's already an inat user where login=joe, so it suggest joe2)
+  def self.suggest_login(requested_login)
+    requested_login = requested_login.to_s
+    requested_login = "naturalist" if requested_login.blank?
+    # strip out everything but letters and numbers so we can pass the login format regex validation
+    requested_login = requested_login.downcase.split('').select do |l| 
+      ('a'..'z').member?(l) || ('0'..'9').member?(l)
+    end.join('')
+    suggested_login = requested_login
+    
+    if suggested_login.size > MAX_LOGIN_SIZE
+      suggested_login = suggested_login[0..MAX_LOGIN_SIZE/2]
+    end
+    
+    appendix = 1
+    while suggested_login.to_s.size < MIN_LOGIN_SIZE || User.find_by_login(suggested_login)
+      appendix += 1 
+      suggested_login = "#{requested_login}#{appendix}"
+    end
+    
+    (MIN_LOGIN_SIZE..MAX_LOGIN_SIZE).include?(suggested_login.size) ? suggested_login : nil
+  end  
+  
   def make_activation_code
     self.deleted_at = nil
     self.activation_code = self.class.make_token
@@ -199,10 +349,6 @@ class User < ActiveRecord::Base
   
   def signup_for_incomplete_community_goals
     goals << Goal.for('community').incomplete.find(:all)
-  end
-  
-  def create_preferences
-    self.preferences ||= Preferences.new
   end
   
   def create_deleted_user

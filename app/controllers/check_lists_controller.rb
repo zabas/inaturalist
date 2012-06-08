@@ -25,7 +25,7 @@ class CheckListsController < ApplicationController
         @find_options[:conditions], ["AND place_id = ?", @list.place_id])
       
       # Make sure we don't get duplicate taxa from check lists other than the default
-      @find_options[:select] = "DISTINCT ON(taxon_ancestor_ids || '/' || listed_taxa.taxon_id) listed_taxa.*"
+      @find_options[:select] = "DISTINCT (taxon_ancestor_ids || '/' || listed_taxa.taxon_id), listed_taxa.*"
       
       # Searches must use place_id instead of list_id for default checklists 
       # so we can search items in other checklists for this place
@@ -101,12 +101,17 @@ class CheckListsController < ApplicationController
   private
   
   def load_list
-    @list = CheckList.find_by_id(params[:id])
+    @list = CheckList.find_by_id(params[:id].to_i)
     render_404 && return unless @list
     true
   end
   
   def lock_down_default_check_lists
+    if logged_in? && current_user.is_admin?
+      flash[:notice] = "You can edit this default check list b/c you're an " + 
+        "admin, but there shouldn't really be a need to do so."
+      return true
+    end
     if @list.is_default?
       flash[:error] = "You can't do that for the default check list of a place!"
       redirect_to @list

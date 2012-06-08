@@ -45,10 +45,11 @@ describe User do
       @user.lists.should include(@user.life_list)
     end
     
-    it "should create a Prefereces object" do
-      @creating_user.call
-      @user.preferences.should_not be_nil
-      @user.preferences.should be_a(Preferences)
+    it "should enforce unique login regardless of a case" do
+      u1 = User.make(:login => 'foo')
+      lambda {
+        User.make(:login => 'FOO')
+      }.should raise_error(ActiveRecord::RecordInvalid)
     end
   end
 
@@ -319,11 +320,83 @@ describe User do
       @user.should be_pending
     end
   end
+  
+  describe "licenses" do
+    it "should update existing observations if requested" do
+      u = User.make
+      o = Observation.make(:user => u)
+      u.preferred_observation_license = Observation::CC_BY
+      u.update_attributes(:make_observation_licenses_same => true)
+      o.reload
+      o.license.should == Observation::CC_BY
+    end
+    
+    it "should update existing photo if requested" do
+      u = User.make
+      p = LocalPhoto.make(:user => u)
+      u.preferred_photo_license = Observation::CC_BY
+      u.update_attributes(:make_photo_licenses_same => true)
+      p.reload
+      p.license.should == Photo.license_number_for_code(Observation::CC_BY)
+    end
+  end
 
-protected
+  protected
   def create_user(options = {})
     record = User.new({ :login => 'quire', :email => 'quire@example.com', :password => 'quire69', :password_confirmation => 'quire69' }.merge(options))
     record.register! if record.valid?
     record
+  end
+end
+
+
+describe User, "merge" do
+  before(:each) do
+    @keeper = User.make
+    @reject = User.make
+  end
+  it "should move observations" do
+    o = Observation.make(:user => @reject)
+    @keeper.merge(@reject)
+    o.reload
+    o.user_id.should == @keeper.id
+  end
+  
+  it "should merge life lists" do
+    t = Taxon.make
+    @reject.life_list.add_taxon(t)
+    @keeper.merge(@reject)
+    @keeper.reload
+    @keeper.life_list.taxon_ids.should include(t.id)
+  end
+  
+  it "should remove self frienships" do
+    f = Friendship.make(:user => @reject, :friend => @keeper)
+    @keeper.merge(@reject)
+    Friendship.find_by_id(f.id).should be_blank
+    @keeper.friendships.map(&:friend_id).should_not include(@keeper.id)
+  end
+  
+  it "should queue a job to refresh the keeper's life list" do
+    Delayed::Job.delete_all
+    stamp = Time.now
+    @keeper.merge(@reject)
+    jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
+    # puts jobs.map(&:handler).inspect
+    jobs.select{|j| j.handler =~ /LifeList.*\:reload_from_observations/m}.should_not be_blank
+  end
+end
+
+describe User, "suggest_login" do
+  it "should suggest logins that are too short" do
+    suggestion = User.suggest_login("AJ")
+    suggestion.should_not be_blank
+    suggestion.size.should be >= User::MIN_LOGIN_SIZE
+  end
+  
+  it "should not suggests logins that are too big" do
+    suggestion = User.suggest_login("Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor")
+    suggestion.should_not be_blank
+    suggestion.size.should be <= User::MAX_LOGIN_SIZE
   end
 end

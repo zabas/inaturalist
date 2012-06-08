@@ -135,6 +135,31 @@ describe Taxon, "destruction" do
   it "should work" do
     @Calypte_anna.destroy
   end
+  
+  it "should queue a job to destroy descendants if orphaned" do
+    Delayed::Job.delete_all
+    stamp = Time.now
+    @Apodiformes.destroy
+    jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
+    jobs.select{|j| j.handler =~ /apply_orphan_strategy/m}.should_not be_blank
+  end
+end
+
+describe Taxon, "orphan descendant destruction" do
+  before(:each) do
+    load_test_taxa
+  end
+  
+  it "should work" do
+    child_ancestry_was = @Apodiformes.child_ancestry
+    @Apodiformes.update_attributes(:parent => nil)
+    Taxon.update_descendants_with_new_ancestry(@Apodiformes.id, child_ancestry_was)
+    @Apodiformes.descendants.should include(@Calypte_anna)
+    child_ancestry_was = @Apodiformes.child_ancestry
+    @Apodiformes.destroy
+    Taxon.apply_orphan_strategy(child_ancestry_was)
+    Taxon.find_by_id(@Calypte_anna.id).should be_blank
+  end
 end
 
 describe "Making a", Taxon, "iconic" do
@@ -241,7 +266,7 @@ describe Taxon, "unique name" do
 
   it "should be the default_name by default" do
     taxon = Taxon.make
-    taxon.unique_name.should == taxon.default_name.name
+    taxon.unique_name.should == taxon.default_name.name.downcase
   end
   
   it "should be the scientific name if the common name is already another taxon's unique name" do
@@ -251,7 +276,7 @@ describe Taxon, "unique name" do
       :lexicon => TaxonName::LEXICONS[:ENGLISH])
     taxon.save
     taxon.reload
-    taxon.unique_name.should == taxon.common_name.name
+    taxon.unique_name.should == taxon.common_name.name.downcase
     
     new_taxon = Taxon.make(:name => "Ballywickia purhiensis", 
       :rank => 'species')
@@ -260,15 +285,16 @@ describe Taxon, "unique name" do
       :lexicon => TaxonName::LEXICONS[:ENGLISH]
     )
     new_taxon.reload
-    new_taxon.unique_name.should == new_taxon.name
+    new_taxon.unique_name.should == new_taxon.name.downcase
   end
   
   it "should be nil if all else fails" do
-    taxon = Taxon.make
+    taxon = Taxon.make # unique name should be the common name
     common_name = TaxonName.make(
       :taxon => taxon, 
       :lexicon => TaxonName::LEXICONS[:ENGLISH])
-      
+    
+    other_taxon = new_taxon = Taxon.make(:name => taxon.name) # unique name should be the sciname
     new_taxon = Taxon.make(:name => taxon.name)
     new_common_name = TaxonName.make(:name => common_name.name,
       :taxon => new_taxon, 
@@ -482,6 +508,40 @@ describe Taxon, "merging" do
     @keeper.merge(@reject)
     lt1.list.listed_taxa.count(:conditions => {:taxon_id => @keeper.id}).should == 1
   end
+  
+  it "should set iconic taxa on children" do
+    reject = Taxon.make
+    child = Taxon.make(:parent => reject)
+    child.iconic_taxon_id.should_not == @keeper.iconic_taxon_id
+    child.iconic_taxon_id.should == reject.iconic_taxon_id
+    @keeper.merge(reject)
+    child.reload
+    child.iconic_taxon_id.should == @keeper.iconic_taxon_id
+  end
+  
+  it "should set iconic taxa on descendants" do
+    @Calypte_anna.iconic_taxon_id.should_not == @Pseudacris.iconic_taxon_id
+    @Pseudacris.merge(@Calypte)
+    @Calypte_anna.reload
+    @Calypte_anna.iconic_taxon_id.should == @Pseudacris.iconic_taxon_id
+  end
+  
+  it "should queue a job to set iconic taxon on observations of descendants" do
+    Delayed::Job.delete_all
+    stamp = Time.now
+    @Pseudacris.merge(@Calypte)
+    jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
+    jobs.select{|j| j.handler =~ /set_iconic_taxon_for_observations_of/m}.should_not be_blank
+  end
+  
+  it "should delete invalid flags" do
+    u = User.make
+    @keeper.flags.create(:user => u, :flag => "foo")
+    @reject.flags.create(:user => u, :flag => "foo")
+    @keeper.merge(@reject)
+    @keeper.reload
+    @keeper.flags.size.should be(1)
+  end
 end
 
 describe Taxon, "moving" do
@@ -501,14 +561,15 @@ describe Taxon, "moving" do
     obs.iconic_taxon_id.should be(taxon.iconic_taxon_id)
   end
   
-  it "should update the iconic taxon of observations of descendants" do
+  it "should queue a job to set iconic taxon on observations of descendants" do
     obs = Observation.make(:taxon => @Calypte_anna)
     old_iconic_id = obs.iconic_taxon_id
     taxon = obs.taxon
+    Delayed::Job.delete_all
+    stamp = Time.now
     taxon.parent.move_to_child_of(@Amphibia)
-    taxon.reload
-    obs.reload
-    obs.iconic_taxon_id.should be(taxon.iconic_taxon_id)
+    jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
+    jobs.select{|j| j.handler =~ /set_iconic_taxon_for_observations_of/m}.should_not be_blank
   end
   
   it "should not raise an exception if the new parent doesn't exist" do
@@ -517,6 +578,31 @@ describe Taxon, "moving" do
     lambda {
       taxon.parent_id = bad_id
     }.should_not raise_error
+  end
+  
+  # this is something we override from the ancestry gem
+  it "should queue a job to update descendant ancetries" do
+    Delayed::Job.delete_all
+    stamp = Time.now
+    @Calypte.update_attributes(:parent => @Hylidae)
+    jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
+    jobs.select{|j| j.handler =~ /update_descendants_with_new_ancestry/m}.should_not be_blank
+  end
+  
+end
+
+describe Taxon, "update_descendants_with_new_ancestry" do
+  before(:each) do
+    load_test_taxa
+  end
+  it "should update the ancestry of descendants" do
+    @Calypte.parent = @Hylidae
+    child_ancestry_was = @Calypte.child_ancestry
+    @Calypte.save
+    Taxon.update_descendants_with_new_ancestry(@Calypte.id, child_ancestry_was)
+    @Calypte_anna.reload
+    @Calypte_anna.ancestry.should =~ /^#{@Hylidae.ancestry}/
+    @Calypte_anna.ancestry.should =~ /^#{@Calypte.ancestry}/
   end
 end
 
@@ -560,11 +646,35 @@ describe Taxon do
   end
 end
 
-# def unload_test_taxa
-#   # [@Life, @Animalia, @Chordata, @Amphibia, @Hylidae, @Pseudacris,
-#   #   @Pseudacris_regilla, @Aves, @Apodiformes, @Trochilidae, @Calypte,
-#   #   @Calypte_anna].each(&:destroy)
-#   # Taxon.all.each(&:destroy)
-#   Taxon.delete_all
-#   TaxonName.delete_all
-# end
+
+describe Taxon, "grafting" do
+  before(:each) do
+    load_test_taxa
+    @graftee = Taxon.make(:rank => "species")
+  end
+  
+  it "should set iconic taxa on children" do
+    @graftee.iconic_taxon_id.should_not == @Pseudacris.iconic_taxon_id
+    @graftee.update_attributes(:parent => @Pseudacris)
+    @graftee.reload
+    @graftee.iconic_taxon_id.should == @Pseudacris.iconic_taxon_id
+  end
+  
+  it "should set iconic taxa on descendants" do
+    taxon = Taxon.make(:name => "Craptaculous", :parent => @graftee)
+    puts
+    puts "starting test, created taxon: #{taxon}, ancestry: #{taxon.ancestry}, iconic_taxon_id: #{taxon.iconic_taxon_id.inspect}"
+    @graftee.update_attributes(:parent => @Pseudacris)
+    taxon.reload
+    puts "taxon.iconic_taxon_id now #{taxon.iconic_taxon_id}, ancestry now #{taxon.ancestry}"
+    taxon.iconic_taxon_id.should == @Pseudacris.iconic_taxon_id
+  end
+  
+  it "should queue a job to set iconic taxon on observations of descendants" do
+    Delayed::Job.delete_all
+    stamp = Time.now
+    @graftee.update_attributes(:parent => @Pseudacris)
+    jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
+    jobs.select{|j| j.handler =~ /set_iconic_taxon_for_observations_of/m}.should_not be_blank
+  end
+end

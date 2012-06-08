@@ -46,12 +46,22 @@ module ApplicationHelper
   
   def compact_date(date)
     return 'the past' if date.nil?
-    if date == Date.today 
-      'Today'
+    if date.is_a?(Time)
+      date = date.in_time_zone(current_user.time_zone) if current_user
+      time = date
+      date = date.to_date
+    end
+    today = if current_user
+      Time.now.in_time_zone(current_user.time_zone).to_date
+    else
+      Date.today
+    end
+    if date == today
+      time ? time.strftime("%I:%M %p").downcase.sub(/^0/, '')  : 'Today'
     elsif date.year == Date.today.year 
-      date.strftime("%b. %e") 
+      date.strftime("%b %e") 
     else 
-      date.strftime("%b. %e, %Y") 
+      date.strftime("%b %e, %Y") 
     end 
   end
   
@@ -108,7 +118,7 @@ module ApplicationHelper
   end
 
   def is_me?(user = @selected_user)
-    logged_in? && (user === current_user)
+    logged_in? && (user.id == current_user.id)
   end
   
   def is_not_me?(user = @selected_user)
@@ -215,11 +225,13 @@ module ApplicationHelper
   def modal_image(flickr_photo, params = {})
     size = params.delete(:size)
     size_method = size ? "#{size}_url" : 'square_url'
+    img_url = flickr_photo.send(size_method)
+    img_url ||= flickr_photo.send("small_url") if size_method != "square_url"
     link_options = params.merge(:rel => photo_path(flickr_photo, :partial => 'photo'))
     link_options[:class] ||= ''
     link_options[:class] += ' modal_image_link'
     link_to(
-      image_tag(flickr_photo.send(size_method),
+      image_tag(img_url,
         :title => flickr_photo.attribution,
         :id => "flickr_photo_#{flickr_photo.id}",
         :class => 'image') + 
@@ -252,6 +264,13 @@ module ApplicationHelper
     html
   end
   
+  def in_format(format)
+    old_format = @template.template_format
+    @template.template_format = format
+    yield
+    @template.template_format = old_format
+  end
+  
   def taxonomic_taxon_list(taxa, options = {}, &block)
     taxa.each do |taxon, children|
       concat "<li class='#{options[:class]}'>"
@@ -268,14 +287,18 @@ module ApplicationHelper
   def user_image(user, options = {})
     size = options.delete(:size)
     style = "vertical-align:middle; #{options[:style]}"
-    url = "http://#{request.host}#{":#{request.port}" if request.port}#{user.icon.url(size || :mini)}"
+    url = if request
+      "http://#{request.host}#{":#{request.port}" if request.port}#{user.icon.url(size || :mini)}"
+    else
+      "#{APP_CONFIG[:site_url]}#{user.icon.url(size || :mini)}"
+    end
     image_tag(url, options.merge(:style => style))
   end
   
   def observation_image(observation, options = {})
     style = "vertical-align:middle; #{options[:style]}"
     url = observation_image_url(observation, options)
-    url ||= iconic_taxon_image_url(observation.iconic_taxon)
+    url ||= iconic_taxon_image_url(observation.iconic_taxon_id)
     image_tag(url, options.merge(:style => style))
   end
   
@@ -286,6 +309,13 @@ module ApplicationHelper
     options[:class] = "image_and_content #{options[:class]}".strip
     options[:style] = "#{options[:style]}; padding-left: #{image_size.to_i + 10}px; position: relative; min-height: #{image_size}px;"
     concat content_tag(:div, image_wrapper + content, options)
+  end
+  
+  # remove unecessary whitespace btwn divs
+  def compact(&block)
+    content = capture(&block)
+    content.gsub!(/div\>[\n\s]+\<div/, 'div><div')
+    concat content
   end
   
   def color_pluralize(num, singular)
@@ -461,6 +491,157 @@ module ApplicationHelper
       # map_tag_attrs["data-place-geojson"] = taxon_range_geom_url(@taxon.id, :format => "geojson")
     end
     map_tag_attrs
+  end
+  
+  def google_static_map_for_observation_url(o, options = {})
+    url_for_options = {
+      :host => 'maps.google.com',
+      :controller => 'maps/api/staticmap',
+      :center => "#{o.latitude},#{o.longitude}",
+      :zoom => o.map_scale || 7,
+      :size => '200x200',
+      :sensor => 'false',
+      :markers => "color:0x#{iconic_taxon_color(o.iconic_taxon_id)}|#{o.latitude},#{o.longitude}",
+      :key => Ym4r::GmPlugin::ApiKey.get
+    }.merge(options)
+    url_for(url_for_options)
+  end
+  
+  def rights(record, options = {})
+    separator = options[:separator] || "<br/>"
+    if record.is_a? Observation
+      user_name = record.user.name
+      user_name = record.user.login if user_name.blank?
+      s = "&copy; #{user_name}"
+      if record.license.blank?
+        s += "#{separator}all rights reserved"
+      else
+        s += separator
+        s += content_tag(:span) do
+          c = if options[:skip_image]
+            ""
+          else
+            link_to(image_tag("#{record.license}_small.png"), url_for_license(record.license)) + " "
+          end
+          c + link_to("some rights reserved", url_for_license(record.license))
+        end
+      end
+    elsif record.is_a? Photo
+      if record.user.blank?
+        s = record.attribution
+      else
+        user_name = record.user.name
+        user_name = record.user.login if user_name.blank?
+        s = if record.copyrighted? || record.creative_commons?
+          "&copy; #{user_name}"
+        else
+          "no known copy restrictions"
+        end
+
+        if record.copyrighted?
+          s += "#{separator}all rights reserved"
+        elsif record.creative_commons?
+          s += separator
+          code = Photo.license_code_for_number(record.license)
+          url = url_for_license(code)
+          s += content_tag(:span) do
+            c = if options[:skip_image]
+              ""
+            else
+              link_to(image_tag("#{code}_small.png"), url) + " "
+            end
+            c + link_to("some rights reserved", url)
+          end
+        end
+      end
+    end
+    content_tag :span, s, :class => "rights verticalmiddle"
+  end
+  
+  def url_for_license(code)
+    "http://creativecommons.org/licenses/#{code[/CC\-(.+)/, 1].downcase}/3.0/"
+  end
+  
+  def update_image_for(update, options = {})
+    options[:style] = "vertical-align:middle; #{options[:style]}"
+    resource = if @update_cache && @update_cache[update.resource_type.underscore.pluralize.to_sym]
+      @update_cache[update.resource_type.underscore.pluralize.to_sym][update.resource_id]
+    end
+    resource ||= update.resource
+    case update.resource_type
+    when "User"
+      image_tag("#{root_url}#{resource.icon.url(:thumb)}", options.merge(:alt => "#{resource.login} icon"))
+    when "Observation"
+      observation_image(resource, options.merge(:size => "square"))
+    when "ListedTaxon"
+      image_tag("#{root_url}images/checklist-icon-color-32px.png", options)
+    when "Post"
+      image_tag("#{root_url}#{resource.user.icon.url(:thumb)}", options)
+    when "Place"
+      image_tag("#{root_url}images/icon-maps.png", options)
+    else
+      image_tag("#{root_url}images/logo-grey-32px.png", options)
+    end
+  end
+  
+  def update_tagline_for(update, options = {})
+    resource = if @update_cache && @update_cache[update.resource_type.underscore.pluralize.to_sym]
+      @update_cache[update.resource_type.underscore.pluralize.to_sym][update.resource_id]
+    end
+    resource ||= update.resource
+    case update.resource_type
+    when "User"
+      if options[:count].to_i == 1
+        "#{options[:skip_links] ? resource.login : link_to(resource.login, url_for_resource_with_host(resource))} added an observation"
+      else
+        "#{options[:skip_links] ? resource.login : link_to(resource.login, url_for_resource_with_host(resource))} added #{options[:count]} observations"
+      end
+    when "Observation", "ListedTaxon"
+      class_name = update.resource.class.to_s.underscore.humanize.downcase
+      notifier = if @update_cache && @update_cache[update.notifier_type.underscore.pluralize.to_sym]
+        @update_cache[update.notifier_type.underscore.pluralize.to_sym][update.notifier_id]
+      end
+      notifier ||= update.notifier
+      if notifier.respond_to?(:user)
+        notifier_user = if @update_cache && @update_cache[:users]
+          @update_cache[:users][notifier.user_id]
+        end
+        notifier_user = notifier.user
+      end
+      s = if update.notification == "activity" && notifier_user
+        notifier_class_name = notifier.class.to_s.underscore.humanize.downcase
+        "#{options[:skip_links] ? notifier_user.login : link_to(notifier_user.login, person_url(notifier_user))} " + 
+        "added #{notifier_class_name =~ /^[aeiou]/i ? 'an' : 'a'} <strong>#{notifier_class_name}</strong> to "
+      else
+        s = "New activity on "
+      end
+      s += "#{class_name =~ /^[aeiou]/i ? 'an' : 'a'} #{options[:skip_links] ? class_name : link_to(class_name, url_for_resource_with_host(resource))}"
+      s += " by #{you_or_login(update.resource_owner)}" if update.resource_owner
+      s
+    when "Post"
+      "New activity on \"#{options[:skip_links] ? resource.title : link_to(resource.title, url_for_resource_with_host(resource))}\" by #{update.resource_owner.login}"
+    when "Place"
+      "New observations from #{options[:skip_links] ? resource.display_name : link_to(resource.display_name, url_for_resource_with_host(resource))}"
+    else
+      "update"
+    end
+  end
+  
+  def url_for_resource_with_host(resource)
+    "#{APP_CONFIG[:site_url]}#{url_for(resource)}"
+  end
+  
+  def commas_and(list)
+    return list.first.to_s if list.size == 1
+    return list.join(' and ') if list.size == 2
+    "#{list[0..-2].join(', ')}, and #{list.last}"
+  end
+  
+  def update_cached(record, association)
+    if @update_cache && @update_cache[association.to_s.pluralize.to_sym]
+      cached = @update_cache[association.to_s.pluralize.to_sym][record.send("#{association}_id")]
+    end
+    cached ||= record.send(association)
   end
   
 end

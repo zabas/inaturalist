@@ -9,7 +9,7 @@
 #
 # It's strongly recommended to check this file into your version control system.
 
-ActiveRecord::Schema.define(:version => 20111212052205) do
+ActiveRecord::Schema.define(:version => 20120529181631) do
 
   create_table "activity_streams", :force => true do |t|
     t.integer  "user_id"
@@ -264,7 +264,7 @@ ActiveRecord::Schema.define(:version => 20111212052205) do
     t.string   "observations_month_counts"
     t.integer  "taxon_range_id"
     t.integer  "source_id"
-    t.boolean  "comprehensive",                           :default => false
+    t.boolean  "manually_added",                          :default => false
   end
 
   add_index "listed_taxa", ["created_at"], :name => "index_listed_taxa_on_place_id_and_created_at"
@@ -300,6 +300,40 @@ ActiveRecord::Schema.define(:version => 20111212052205) do
   add_index "lists", ["source_id"], :name => "index_lists_on_source_id"
   add_index "lists", ["type", "id"], :name => "index_lists_on_type_and_id"
   add_index "lists", ["user_id"], :name => "index_lists_on_user_id"
+
+  create_table "observation_field_values", :force => true do |t|
+    t.integer  "observation_id"
+    t.integer  "observation_field_id"
+    t.string   "value"
+    t.datetime "created_at"
+    t.datetime "updated_at"
+  end
+
+  add_index "observation_field_values", ["observation_field_id"], :name => "index_observation_field_values_on_observation_field_id"
+  add_index "observation_field_values", ["observation_id"], :name => "index_observation_field_values_on_observation_id"
+
+  create_table "observation_fields", :force => true do |t|
+    t.string   "name"
+    t.string   "datatype"
+    t.integer  "user_id"
+    t.string   "description"
+    t.datetime "created_at"
+    t.datetime "updated_at"
+    t.string   "allowed_values"
+  end
+
+  add_index "observation_fields", ["name"], :name => "index_observation_fields_on_name"
+
+  create_table "observation_links", :force => true do |t|
+    t.integer  "observation_id"
+    t.string   "rel"
+    t.string   "href"
+    t.string   "href_name"
+    t.datetime "created_at"
+    t.datetime "updated_at"
+  end
+
+  add_index "observation_links", ["observation_id", "href"], :name => "index_observation_links_on_observation_id_and_href"
 
   create_table "observation_photos", :force => true do |t|
     t.integer  "observation_id", :null => false
@@ -341,10 +375,16 @@ ActiveRecord::Schema.define(:version => 20111212052205) do
     t.string   "geoprivacy"
     t.point    "geom",                             :limit => nil
     t.string   "quality_grade",                                                                   :default => "casual"
+    t.string   "user_agent"
+    t.string   "positioning_method"
+    t.string   "positioning_device"
+    t.boolean  "out_of_range"
+    t.string   "license"
   end
 
   add_index "observations", ["geom"], :name => "index_observations_on_geom", :spatial => true
   add_index "observations", ["observed_on", "time_observed_at"], :name => "index_observations_on_observed_on_and_time_observed_at"
+  add_index "observations", ["out_of_range"], :name => "index_observations_on_out_of_range"
   add_index "observations", ["quality_grade"], :name => "index_observations_on_quality_grade"
   add_index "observations", ["taxon_id", "user_id"], :name => "index_observations_on_taxon_id_and_user_id"
   add_index "observations", ["user_id", "observed_on", "time_observed_at"], :name => "index_observations_user_datetime"
@@ -386,6 +426,7 @@ ActiveRecord::Schema.define(:version => 20111212052205) do
     t.string   "file_file_name"
     t.integer  "file_file_size"
     t.boolean  "file_processing"
+    t.boolean  "mobile",            :default => false
   end
 
   add_index "photos", ["native_photo_id"], :name => "index_flickr_photos_on_flickr_native_photo_id"
@@ -408,6 +449,7 @@ ActiveRecord::Schema.define(:version => 20111212052205) do
     t.datetime      "created_at"
     t.datetime      "updated_at"
     t.multi_polygon "geom",              :limit => nil, :null => false
+    t.string        "source_filename"
   end
 
   add_index "place_geometries", ["geom"], :name => "index_place_geometries_on_geom", :spatial => true
@@ -434,6 +476,7 @@ ActiveRecord::Schema.define(:version => 20111212052205) do
     t.datetime "updated_at"
     t.boolean  "delta",                                             :default => false
     t.integer  "user_id"
+    t.string   "source_filename"
   end
 
   add_index "places", ["bbox_area"], :name => "index_places_on_bbox_area"
@@ -456,6 +499,19 @@ ActiveRecord::Schema.define(:version => 20111212052205) do
   end
 
   add_index "posts", ["published_at"], :name => "index_posts_on_published_at"
+
+  create_table "preferences", :force => true do |t|
+    t.string   "name",       :null => false
+    t.integer  "owner_id",   :null => false
+    t.string   "owner_type", :null => false
+    t.integer  "group_id"
+    t.string   "group_type"
+    t.string   "value"
+    t.datetime "created_at"
+    t.datetime "updated_at"
+  end
+
+  add_index "preferences", ["owner_id", "owner_type", "name", "group_id", "group_type"], :name => "index_preferences_on_owner_and_name_and_preference", :unique => true
 
   create_table "project_assets", :force => true do |t|
     t.integer  "project_id"
@@ -486,6 +542,7 @@ ActiveRecord::Schema.define(:version => 20111212052205) do
     t.datetime "created_at"
     t.datetime "updated_at"
     t.integer  "curator_identification_id"
+    t.string   "tracking_code"
   end
 
   add_index "project_observations", ["curator_identification_id"], :name => "index_project_observations_on_curator_identification_id"
@@ -518,10 +575,14 @@ ActiveRecord::Schema.define(:version => 20111212052205) do
     t.datetime "icon_updated_at"
     t.string   "project_type"
     t.string   "cached_slug"
-    t.integer  "species_count",     :default => 0
+    t.integer  "observed_taxa_count", :default => 0
+    t.datetime "featured_at"
+    t.string   "source_url"
+    t.string   "tracking_codes"
   end
 
   add_index "projects", ["cached_slug"], :name => "index_projects_on_cached_slug", :unique => true
+  add_index "projects", ["source_url"], :name => "index_projects_on_source_url"
   add_index "projects", ["user_id"], :name => "index_projects_on_user_id"
 
   create_table "provider_authorizations", :force => true do |t|
@@ -616,6 +677,19 @@ ActiveRecord::Schema.define(:version => 20111212052205) do
   add_index "states_simplified_1", ["geom"], :name => "index_states_simplified_1_on_geom", :spatial => true
   add_index "states_simplified_1", ["place_geometry_id"], :name => "index_states_simplified_1_on_place_geometry_id"
   add_index "states_simplified_1", ["place_id"], :name => "index_states_simplified_1_on_place_id"
+
+  create_table "subscriptions", :force => true do |t|
+    t.integer  "user_id"
+    t.string   "resource_type"
+    t.integer  "resource_id"
+    t.datetime "created_at"
+    t.datetime "updated_at"
+    t.integer  "taxon_id"
+  end
+
+  add_index "subscriptions", ["resource_type", "resource_id"], :name => "index_subscriptions_on_resource_type_and_resource_id"
+  add_index "subscriptions", ["taxon_id"], :name => "index_subscriptions_on_taxon_id"
+  add_index "subscriptions", ["user_id"], :name => "index_subscriptions_on_user_id"
 
   create_table "taggings", :force => true do |t|
     t.integer  "tag_id"
@@ -761,6 +835,25 @@ ActiveRecord::Schema.define(:version => 20111212052205) do
     t.integer  "rank_level"
   end
 
+  create_table "updates", :force => true do |t|
+    t.integer  "subscriber_id"
+    t.integer  "resource_id"
+    t.string   "resource_type"
+    t.string   "notifier_type"
+    t.integer  "notifier_id"
+    t.string   "notification"
+    t.datetime "created_at"
+    t.datetime "updated_at"
+    t.integer  "resource_owner_id"
+    t.datetime "viewed_at"
+  end
+
+  add_index "updates", ["notifier_type", "notifier_id"], :name => "index_updates_on_notifier_type_and_notifier_id"
+  add_index "updates", ["resource_owner_id"], :name => "index_updates_on_resource_owner_id"
+  add_index "updates", ["resource_type", "resource_id"], :name => "index_updates_on_resource_type_and_resource_id"
+  add_index "updates", ["subscriber_id"], :name => "index_updates_on_subscriber_id"
+  add_index "updates", ["viewed_at"], :name => "index_updates_on_viewed_at"
+
   create_table "users", :force => true do |t|
     t.string   "login",                     :limit => 40
     t.string   "name",                      :limit => 100
@@ -785,7 +878,7 @@ ActiveRecord::Schema.define(:version => 20111212052205) do
     t.integer  "identifications_count",                    :default => 0
     t.integer  "journal_posts_count",                      :default => 0
     t.integer  "life_list_taxa_count",                     :default => 0
-    t.text     "preferences"
+    t.text     "old_preferences"
     t.string   "icon_url"
     t.string   "last_ip"
   end

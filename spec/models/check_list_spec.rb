@@ -113,6 +113,40 @@ describe CheckList, "refresh_with_observation" do
     @check_list.taxon_ids.should_not include(@taxon.id)
   end
   
+  it "should remove listed taxa if observation deleted" do
+    o = make_research_grade_observation(:latitude => @place.latitude, :longitude => @place.longitude, :taxon => @taxon)
+    
+    @place.place_geometry.geom.should_not be_blank
+    o.geom.should_not be_blank
+    
+    @check_list.add_taxon(@taxon)
+    CheckList.refresh_with_observation(o)
+    @check_list.reload
+    @check_list.taxon_ids.should include(@taxon.id)
+    observation_id = o.id
+    o.destroy
+    CheckList.refresh_with_observation(observation_id, :taxon_id => @taxon.id)
+    @check_list.reload
+    @check_list.taxon_ids.should_not include(@taxon.id)
+  end
+  
+  it "should remove listed taxa if observation taxon id changed" do
+    o = make_research_grade_observation(:latitude => @place.latitude, :longitude => @place.longitude, :taxon => @taxon)
+    CheckList.refresh_with_observation(o)
+    @check_list.reload
+    
+    lt = @check_list.listed_taxa.find_by_taxon_id(@taxon.id)
+    lt.should_not be_auto_removable_from_check_list
+    
+    o.taxon = Taxon.make
+    o.save
+    CheckList.refresh_with_observation(o, :taxon_id => o.taxon_id, :taxon_id_was => @taxon.id)
+    @check_list.reload
+    @check_list.taxon_ids.should_not include(@taxon.id)
+  end
+  
+  it "should remove listed taxa if observation taxon id removed"
+  
   it "should not remove listed taxa if added by a user" do
     o = make_research_grade_observation(:latitude => @place.latitude, :longitude => @place.longitude, :taxon => @taxon)
     @check_list.add_taxon(@taxon, :user => User.make)
@@ -265,6 +299,15 @@ describe CheckList, "refresh_with_observation" do
     @place.reload
     @place.taxon_ids.should include(child.id)
   end
+  
+  it "should add the species along with infraspecies" do
+    species = Taxon.make(:rank => Taxon::SPECIES)
+    subspecies = Taxon.make(:rank => Taxon::SUBSPECIES, :parent => species)
+    o = make_research_grade_observation(:latitude => @place.latitude, :longitude => @place.longitude, :taxon => subspecies)
+    CheckList.refresh_with_observation(o)
+    @place.reload
+    @place.taxon_ids.should include(species.id)
+  end
 end
 
 describe CheckList, "sync_with_parent" do
@@ -280,5 +323,36 @@ describe CheckList, "sync_with_parent" do
     list.sync_with_parent
     parent_list.reload
     parent_list.taxon_ids.should include(taxon.id)
+  end
+end
+
+describe CheckList, "updating to comprehensive" do
+  before(:each) do
+    @parent = Taxon.make
+    @taxon = Taxon.make(:parent => @parent)
+    @place = Place.make
+  end
+  
+  it "should mark listed taxa of descendant taxa from other check lists for this place as absent" do
+    lt = @place.check_list.add_taxon(@taxon)
+    lt.should_not be_absent
+    
+    l = CheckList.make(:place => @place, :taxon => @parent, :comprehensive => true)
+    lt.reload
+    lt.should be_absent
+  end
+  
+  it "should mark listed taxa of descendant taxa from other check lists for this place as absent if they are on this list" do
+    l = CheckList.make(:place => @place, :taxon => @parent)
+    l.add_taxon(@taxon)
+    l.taxon_ids.should include(@taxon.id)
+    
+    lt = @place.check_list.add_taxon(@taxon)
+    @place.check_list.taxon_ids.should include(@taxon.id)
+    lt.should_not be_absent
+    
+    l.update_attributes(:comprehensive => true)
+    lt.reload
+    lt.should_not be_absent
   end
 end

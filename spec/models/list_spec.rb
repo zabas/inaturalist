@@ -35,3 +35,14 @@ describe List, "taxon adding" do
   end
   
 end
+
+describe List, "refresh_with_observation" do
+  it "should update stats" do
+    listed_taxon = ListedTaxon.make
+    listed_taxon.last_observation_id.should be_blank
+    o = Observation.make(:user => listed_taxon.list.user, :taxon => listed_taxon.taxon)
+    List.refresh_with_observation(o, :skip_subclasses => true)
+    listed_taxon.reload
+    listed_taxon.last_observation_id.should == o.id
+  end
+end

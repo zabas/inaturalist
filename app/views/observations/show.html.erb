@@ -24,13 +24,21 @@
   <meta property="og:site_name" content="iNaturalist"/> 
   <meta property="fb:admins" content="611249211,800415373"/>
   <meta property="fb:app_id" content="26558815027" />
-  <% unless @observation.description.blank? %>
+  <% if @observation.description.blank? %>
+    <meta property="og:description" content="<%= html_attributize @observation.to_plain_s %>"/> 
+  <% else %>
     <meta property="og:description" content="<%= html_attributize @observation.description %>"/> 
   <% end %>
+  
+  <% unless @observation_links.blank? -%>
+    <% for ol in @observation_links %>
+      <link rel="<%= ol.rel %>" href="<%= ol.href %>"/>
+    <% end %>
+  <% end -%>
 <%- end -%>
 
 <% content_for(:extracss) do %>
-  <%= stylesheet_link_tag 'observations', 'identifications', 'observations/show', "jquery/ui.tabs.css" %>
+  <%= stylesheet_link_tag 'identifications', 'observations/show', "jquery/ui.tabs.css" %>
   <style type="text/css" media="screen">  
     .identification_form_wrapper{background-color:#eee;padding:10px;}
     .identification_form_wrapper input.text{width:236px;margin-top:0;}
@@ -38,15 +46,6 @@
     .identification_form_wrapper label{display:none;}
     #tools .button{margin-bottom:0;}
     #tools .toggle_menu{float:left;}
-    #comments_and_identifications .item{margin-bottom:1.5em;}
-    .item_user{width:48px;}
-    .item_content{width:532px;}
-    .item_content .identification_image{margin-right:0.5em;}
-    .item_content .identification_image,
-    .item_content .identification_body{display:inline;float:none;}
-    .item_content .identification_image img{width:32px;vertical-align:middle;}
-    .item_content .identification{padding:0.5em;background-color:#eee;margin-bottom:0.5em;}
-    .item_content p{margin-bottom:0.5em;}
     .comment{padding:0;}
     .comment .meta{float:none;width:auto;}
     .comment .body{padding-left:0;}
@@ -58,21 +57,21 @@
     #new_identification_form .species_guess{width:538px;}
     #new_identification_form label{display:block;}
     #new_identification_form textarea{width:538px;height:150px;}
-    .identifications-list .agreers{padding-left:60px;}
-    .identifications-list .identification_image{width:40px;text-align:center;}
-    .identifications-list .identification_image img{max-width:40px;}
-    .identifications-list .identification_body{float:left;width:200px;}
+    #identifications .agreers{padding-left:60px;}
+    #identifications .identification_image{width:40px;text-align:center;}
+    #identifications .identification_image img{max-width:40px;}
+    #identifications .identification_body{float:left;width:200px;}
     .identification_group{margin-bottom:10px;}
     #projects .box{padding:5px;}
     .id_please_notice.box { padding: 5px; border-radius: 5px; -webkit-border-radius: 5px; -moz-border-radius: 5px;}
     #day_observations img {width: 32px; margin-bottom: 5px;}
+    .quality_assessment {width:100%;}
   </style>
 <% end %>
 <% content_for(:extrajs) do %>
   <script type="text/javascript" src="http://maps.google.com/maps/api/js?sensor=false"></script>
   <%= javascript_include_tag('jquery/plugins/jqModal',
                              'modal_image',
-                             'jquery/plugins/inat/taxon_selectors', 
                              'inaturalist/map3') %>
   
   <script type="text/javascript" charset="utf-8">
@@ -92,11 +91,23 @@
         var center = new google.maps.LatLng(
           observation.private_latitude || observation.latitude, 
           observation.private_longitude || observation.longitude);
-        map.setCenter(center); 
+        map.setCenter(center);
+        google.maps.event.addListenerOnce(map, 'idle', function() {
+          if (observation._circle) {
+            map.fitBounds(map.getBounds().union(observation._circle.getBounds()))
+          }
+          google.maps.event.trigger(map, 'zoom_changed')
+        })
         
         $(window).load(function() {
-          $('#where').width($('#where-and-photos').width() - $("#photos").width())
-          $('#map').width($('#where-and-photos').width() - $("#photos").width())
+          var newWidth = $('#where-and-photos').width() - $("#photos").width()
+          newWidth -= 11;
+          var newHeight = $('#photos .first img').height()
+          $('#where').width(newWidth)
+          $('#map').width(newWidth)
+          if (newHeight) {
+            $('#map').height(newHeight)
+          }
           if (map && observation) {
             google.maps.event.trigger(map, 'resize')
             map.setCenter(center)
@@ -151,6 +162,13 @@
             }
           }
         })
+      })
+      
+      $('a[rel=alternate]').each(function() {
+        $(this).css({
+          background: "url(http://www.google.com/s2/u/0/favicons?domain=" + this.hostname + ") left center no-repeat",
+          "padding": "1px 0 1px 20px"
+        });
       })
     });
   </script>
@@ -224,6 +242,7 @@
                 <% else %>
                   <%= link_to "add", 
                     add_project_observation_path(project, :observation_id => @observation.id),
+                    "data-loading-click" => "Adding...",
                     :method => :post,
                     :class => "glaucous button" %>
                 <% end -%>
@@ -251,30 +270,46 @@
   <% end %>
 </div><!-- end pageheader -->
 
-<div id="singleobs" class="column span-16">
-  <div id="where-and-photos" class="last column span-16">
+<div id="singleobs" class="column span-17">
+  <div id="where-and-photos" class="clear">
     <% if !@photos.blank? -%>
       <div id="photos">
-        <%= modal_image(@photos.first, :size => :small, :class => 'first') -%>
-        <% for photo in @photos[1..3] -%>
-          <%= modal_image(photo, :size => :square) -%>
+        <%- 
+          photo_size = @photos.first.is_a?(FacebookPhoto) ? :large : :medium
+          extra_count = 5
+          cycle_classes = [""]*(extra_count-1) + ["last"]
+        -%>
+        <%= link_to image_tag(@photos.first.send("#{photo_size}_url")), @photos.first.becomes(Photo), :class => "first zoomable", :title => "Photo #{@photos.first.attribution}" %>
+        <% for photo in @photos[1..extra_count] -%>
+          <%= link_to image_tag(photo.square_url), photo.becomes(Photo), :class => "zoomable smallphoto #{cycle(*cycle_classes)}", :title => "Photo #{photo.attribution}" %>
         <% end -%>
-        <% if @photos.size > 4 -%>
+        <% if @photos.size > extra_count+1 -%>
           <div style="clear: both">
             <%= link_to_toggle "View all #{@observation.photos.size} photos", "#morephotos" %>
             <div id="morephotos" style="display: none">
-              <% for photo in @photos[4..-1] -%>
-                <%= modal_image(photo, :size => :square) -%>
+              <% for photo in @photos[(extra_count+1)..-1] -%>
+                <%= link_to image_tag(photo.square_url), photo.becomes(Photo), :class => "zoomable smallphoto", :title => "Photo #{photo.attribution}" %>
               <% end -%>
             </div>
           </div>
         <% end -%>
+        
+        <div class="meta" style="clear:both;">
+          Photo<%= 's' if @photos.size > 1 %>
+          <% if @photos.map{|p| p.license}.compact.uniq.size <= 1 -%>
+            <%= rights @photos.first, :skip_image => true, :separator => " " %>
+          <% else %>
+            &copy;
+            <%= @observation.user.name.blank? ? @observation.user.login : @observation.user.name %>,
+            mixed licenses
+          <% end -%>
+        </div>
       </div>
     <%- end -%>
     
     <div id="where">
       <% if show_observation_coordinates?(@observation) %>
-        <div id="map"></div>
+        <div id="map" class="stacked"></div>
       <% end %>
       <div class="description">
         <%= render :partial => 'location', :locals => {:inline_edit => true, :places => @places} %>
@@ -283,75 +318,69 @@
   </div><!-- end where-and-photos -->
   
   <% unless @observation.description.blank? %>
-  <div id="observation-description">
-    <h3>Description</h3>
-    <div class="clear readable description">
-      <%= formatted_user_text(@observation.description) %>
+    <div id="observation-description">
+      <h3>Description</h3>
+      <div class="clear readable description">
+        <%= formatted_user_text(@observation.description) %>
+      </div>
     </div>
-  </div>
   <% end %>
   
-  <div id="dates" class="description date">
-    <label>Added:</label>
-    <span class="date">
-      <%= @observation.created_at.strftime("%b. %e, %Y") %>
-    </span>
-    <span class="time">
-      <%= @observation.created_at.strftime("%I:%M %p %Z") %>
-    </span>
+  <div class="clear column span-16">
+    <% unless @observation.tags.blank? %>
+      <div id="tags" class="description">
+        <label>Tags:</label>
+        <ul>
+          <% @observation.tags.each do |tag| %>
+            <li>
+              <%= link_to h(tag.name), observations_by_login_path(@observation.user.login, :q => h(tag.name), :search_on => "tags") %>
+            </li>
+          <% end %>
+        </ul>
+      </div>
+    <% end -%>
+
+    <div id="dates" class="description date nobr">
+      <label>Added:</label>
+      <span class="date">
+        <%= @observation.created_at.strftime("%b. %e, %Y") %>
+      </span>
+      <span class="time">
+        <%= @observation.created_at.strftime("%I:%M %p %Z") %>
+      </span>
+    </div>
+
+    <% if @observation.mobile? -%>
+      <div id="device" class="description <%= @observation.device_name.to_s.split.join('_').downcase %>">
+        <label>Device:</label>
+        <% if @observation.device_url -%>
+          <%= link_to @observation.device_name, @observation.device_url %>
+        <% else %>
+          <%= @observation.device_name %>
+        <% end -%>
+      </div>
+    <% end -%>
+    
+    <% unless @observation.observation_field_values.blank? -%>
+      <div class="observation_fields description admin">
+        <% for ofv in @observation.observation_field_values %>
+          <div class="observation_field_value">
+            <label data-tip="<%=h ofv.observation_field.description %>" data-tip-width="auto">
+              <%=h ofv.observation_field.name.capitalize %>:
+            </label>
+            <%=h ofv.value %>
+          </div>
+        <% end %>
+      </div>
+    <% end -%>
+    
+    <%= separator %>
   </div>
   
-  <% unless @observation.tags.blank? %>
-    <div id="tags" class="description">
-      <label>Tags:</label>
-      <ul>
-        <% @observation.tags.each do |tag| %>
-          <li>
-            <%= link_to h(tag.name), observations_by_login_path(@observation.user.login, :q => h(tag.name), :search_on => "tags") %>
-          </li>
-        <% end %>
-      </ul>
-    </div>
-  <% end -%>
-  
-  <%= separator %>
-  
-  <div id="comments_and_identifications" class="column span-15">
+  <div id="comments_and_identifications" class="column span-16">
     <h3>Comments &amp; Identifications</h3>
-    <% for item in @comments_and_identifications %>
-      <div id="<%= id_for(item) %>" class="<%= item.class.name.humanize.underscore %> item clear">
-        <div class="item_user column">
-          <%= link_to(
-            image_tag(item.user.icon.url(:thumb), :class => 'usericon'),
-            person_path(item.user)) %>
-        </div>
-        <div class="item_content last column">
-          <%- if item.is_a? Identification %>
-            <%= render :partial => "identifications/identification", :locals => { :identification => item } %>
-          <%- end -%>
-          
-          <% unless item.body.blank? -%>
-            <div class="body"><%= formatted_user_text(item.body) %></div>
-          <% end -%>
-          
-          <div class="meta">
-            Posted by <%= link_to(truncate(you_or_login(item.user), :length => 20), person_path(item.user)) %>
-            <span class="when">
-              <span class="date"><%= time_ago_in_words(item.created_at) %></span> ago
-            </span>
-            <%- if @user and @user.login == item.user.login -%>
-            <span class="comment_actions">
-              (<%= link_to "Edit", item.is_a?(Identification) ? edit_identification_path(item) : edit_comment_path(item) %> |
-              <%= link_to "Delete", item, 
-                          :confirm => "Are you sure you want to delete this comment?", 
-                          :method => :delete, 
-                          :id => "delete_comment_#{item.id}_button" %>)
-            </span>
-            <%- end -%>
-          </div>
-        </div>
-      </div>
-    <% end %>
+    <%= render :partial => 'shared/activity_item', :collection => @comments_and_identifications %>
+    
     <div id="forms" class="ui-tabs">
       <ul class="clear">
         <li><h3><a href="#new_comment_form"><span>Add a Comment</span></a></h3></li>
@@ -392,9 +421,14 @@
       </div>
     </div><!-- end new comment -->
   </div><!-- end comments -->
+  
+  <% if logged_in? -%>
+    <%= render :partial => 'subscriptions/subscription', :locals => {:resource => @observation } %>
+  <% end -%>
+  
 </div><!-- end singleobs -->
 
-<div class="column prepend-1 span-7 last">  
+<div class="column span-7 last">  
 
   <div id="identifications" class="clear">
     <h3>Identification Summary</h3>
@@ -447,9 +481,7 @@
         </div>
         
         <div id="need_id_help" class="quiet stacked box" style="display: <%= @observation.id_please? ? 'none' : 'block' %>">
-          <span class="inter">Need ID help?</span>
-          
-          <%= link_to_remote "add to ID Please",
+          <%= link_to_remote "Add to ID Please",
             :url => @observation,
             :with => "'ignore_photos=true&observation[id_please]=true'",
             :method => :put,
@@ -459,6 +491,7 @@
               :class => "glaucous button",
               :style => "float: right; margin: 0;"
             } %>
+          <span class="inter">Need ID help?</span>
         </div>
       </div>
     <% elsif @observation.id_please? %>
@@ -597,6 +630,79 @@
       Data Quality Assessment
     </h3>
     <%= render :partial => "quality_metrics/quality_metrics", :object => @observation %>
+    <%= separator %>
+  </div>
+  
+  <% unless @observation_links.blank? -%>
+    <div id="links" class="stacked">
+      <div id="links_tip" style="display:none;">
+        <p>
+          <%= APP_CONFIG[:site_name] %> shares licensed observation data with
+          several data partners so your data can be more accessible to
+          scientists and other researchers.
+        </p>
+        
+        <% if is_me?(current_user) -%>
+          <p>
+            If you don't want us to share your data, 
+            <%= link_to_function "un-license this observation", 
+              "$('#editlicense').dialog({modal:true, width:'auto', title: 'Edit license'})" %>,
+            or you can
+            <%= link_to "edit your account", edit_user_path(current_user, :anchor => 'licenses') %>
+            and un-license all your observations.
+          </p>
+        <% end -%>
+        
+        <p>
+          If you'd like us to share your observations with data partners, make
+          sure you've chosen to license your observations with a Creative
+          Commons license.
+        </p>
+      </div>
+      <h3>
+        <span class="right quality_tip_target description helptip" rel="#links_tip" data-helptip-title="About External Links" data-helptip-width="500" style="margin-top:4px"></span>
+        External Links
+      </h3>
+      <p class="meta ui">
+        This observation has been incorporated into the following external websites:
+      </p>
+      <ul class="plain inline">
+        <% for ol in @observation.observation_links %>
+          <li class="inlineblock" style="margin-right: 10px;">
+            <%= link_to ol.href_name, ol.href, :rel => "alternate" %>
+          </li>
+        <% end %>
+      </ul>
+      <%= separator %>
+    </div>
+  <% end -%>
+  
+  <div class="rights stacked meta">
+    Observation <%= rights @observation %>
+    <% if is_me? @observation.user -%>
+      <span class="button">
+        <%= link_to_function "edit", "$('#editlicense').dialog({modal:true, width:'auto', title: 'Edit license'})" %>
+      </span>
+      <% if @observation.license.blank? -%>
+        <div class="padded notice status iconified">
+          <span class="ui-icon ui-icon-transfer-e-w inlineblock"></span>
+          Share your observation with researchers by
+          <%= link_to_function "using a license", "$('#editlicense').dialog({modal:true, width:'auto', title: 'Edit license'})" %>.
+        </div>
+      <% end -%>
+      <div id="editlicense" class="dialog" style="display:none">
+        <div class="column span-18 verticalmiddle licensechoices">
+          <p class="ui description">
+            Licensing your content gives others the legal right to use it if
+            they stick to the terms of the license. iNat uses your Creative
+            Commons-licensed content to share with data partners like the 
+            <a href="http://www.gbif.org/">Global Biodiversity Information Facility</a>
+            (GBIF).
+          </p>
+          <%= render :partial => 'shared/license_form' %>
+        </div>
+      </div>
+    <% end -%>
   </div>
   
   <% if @observation.flagged? %>

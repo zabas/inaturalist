@@ -3,7 +3,7 @@ Observations by <%= h @login %>
 <% end %>
 
 <% content_for(:extracss) do %>
-<%= stylesheet_link_tag 'observations', 'observations/by_login', 'observations/filters' %>
+<%= stylesheet_link_tag 'observations/by_login', 'observations/filters' %>
 <style type="text/css" media="screen">
   .observations.table .header.user,
   .observations.table .observation .attribute.user {
@@ -50,6 +50,8 @@ Observations by <%= h @login %>
     margin-bottom: -1px;
   }
   
+  #map { margin-bottom: 5px; }
+  
 </style>
 <!--[if lte IE 7]>
   <%= stylesheet_link_tag 'blueprint/ie', 'observations-ie' %>
@@ -62,11 +64,18 @@ Observations by <%= h @login %>
                            'inaturalist/map3',
                            "observations/filters",
                            'jquery/plugins/jquery.labelize',
-                           'jquery/plugins/inat/checkboxes',
-                           'jquery/plugins/inat/taxon_selectors' %>
+                           'jquery/plugins/inat/checkboxes' %>
 
  <script type="text/javascript" charset="utf-8">
     // define a function to be run after the window is fully loaded
+    <% if !params[:nelat].blank? && !params[:nelng].blank? && !params[:swlat].blank? && !params[:swlng].blank? %>
+      var bounds = new google.maps.LatLngBounds(
+        new google.maps.LatLng(<%= params[:swlat] %>, <%= params[:swlng] %>),
+        new google.maps.LatLng(<%= params[:nelat] %>, <%= params[:nelng] %>)
+      )
+    <% else %>
+      var bounds = new google.maps.LatLngBounds()
+    <% end -%>
     function initialize() {
       // create a Google Map instance
       var map = window.map = iNaturalist.Map.createMap({lat: 40.714, lng: -98.262, zoom: 3});
@@ -81,7 +90,7 @@ Observations by <%= h @login %>
       
       var letter_counter = 0;
       var letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-      var bounds = new google.maps.LatLngBounds();
+      
       $.each(observations, function(o) {
         var o = this;
         if ((o.latitude && o.longitude) || (o.private_latitude && o.private_longitude)) {
@@ -239,6 +248,15 @@ Observations by <%= h @login %>
         $(this).parents('.observation').find('.control input').check()
       })
     }
+    
+    function redoSearchInMapArea() {
+      var bounds = map.getBounds();
+      $('#filters input[name=swlat]').val(bounds.getSouthWest().lat());
+      $('#filters input[name=swlng]').val(bounds.getSouthWest().lng());
+      $('#filters input[name=nelat]').val(bounds.getNorthEast().lat());
+      $('#filters input[name=nelng]').val(bounds.getNorthEast().lng());
+      $('#submit_filters_button').click();
+    }
  </script>
  
  <!--[if lt IE 8]>
@@ -296,9 +314,11 @@ Observations by <%= h @login %>
                 <li class="inline buttonrow">
                     <%= link_to_function "add", 
                       "actOnSelected('#{add_project_observation_batch_path(project_user.project)}', {method: 'post'})",
+                      "data-loading-click" => "Adding...",
                       :class => "glaucous button" %>
                     <%= link_to_function "remove", 
                       "actOnSelected('#{remove_project_observation_batch_path(project_user.project)}', {method: 'post'})",
+                      "data-loading-click" => "Removing...",
                       :class => "pale button" %>
                   <%= link_to h(project_user.project.title), project_user.project, :class => "inter" %>
                 </li>
@@ -340,11 +360,12 @@ Observations by <%= h @login %>
     </div>
   <% end %>
   <div id="pagination">
+    <% Rails.logger.debug "[DEBUG] @prefs: #{@prefs.inspect}" %>
     <% if logged_in? -%>
-      <% form_for @prefs, :url => url_for, :html => {:style => "float: left"} do |f| %>
+      <% form_for :preferences, :url => url_for, :html => {:style => "float: left"} do |f| %>
         <%= f.label :per_page %>
         <%= f.select :per_page, ApplicationController::PER_PAGES, 
-          {:selected => @prefs.per_page.to_i}, :onchange => "$(this).parents('form:first').submit()" %>
+          {:selected => @prefs["per_page"].to_i}, :onchange => "$(this).parents('form:first').submit()" %>
       <% end %>
     <% end -%>
     
@@ -352,8 +373,12 @@ Observations by <%= h @login %>
   </div>
 </div>
 
-<div id="mapcol" class="column span-7 last">
+<div id="mapcol" class="column span-7 last stacked">
   <div id="map"></div>
+  <%= link_to_function "Redo search in map area", 
+    "redoSearchInMapArea()", 
+    :id => 'redo_search_in_map_area_button',
+    "data-loading-click" => "Loading..." %>
 </div>
 
 <div class="last column span-24">

@@ -111,7 +111,13 @@ google.maps.Map.prototype.addObservation = function(observation, options) {
   marker.setMap(this);
   observation.marker = marker;
   
-  if (options.showAccuracy && observation.positional_accuracy && observation.positional_accuracy > 0) {
+  if (options.showAccuracy && 
+      (observation.coordinates_obscured || (observation.positional_accuracy && observation.positional_accuracy > 0))) {
+    var accuracy = parseInt(observation.positional_accuracy) || 0
+    if (observation.coordinates_obscured) {
+      accuracy += 10000
+    }
+    if (accuracy == 0) return
     var color = observation.iconic_taxon ? iNaturalist.Map.ICONIC_TAXON_COLORS[observation.iconic_taxon.name] : '#333333'
     var circle = new google.maps.Circle({
       strokeColor: color,
@@ -121,7 +127,17 @@ google.maps.Map.prototype.addObservation = function(observation, options) {
       fillOpacity: 0.35,
       map: this,
       center: marker.getPosition(),
-      radius: observation.positional_accuracy
+      radius: accuracy
+    })
+    observation._circle = circle
+    google.maps.event.addListener(this, 'zoom_changed', function() {
+      var mapBounds = this.getBounds(),
+          circleBounds = circle.getBounds()
+      if (circleBounds.contains(mapBounds.getNorthEast()) && circleBounds.contains(mapBounds.getSouthWest())) {
+        circle.setVisible(false)
+      } else {
+        circle.setVisible(true)
+      }
     })
   }
   
@@ -209,6 +225,27 @@ google.maps.Map.prototype.addPlace = function(place, options) {
   // return the place for futher use
   return place;
 }
+
+// Zooms to place boundaries, adds kml if available
+google.maps.Map.prototype.setPlace = function(place, options) {
+  if (place.swlat) {
+    var bounds = new google.maps.LatLngBounds(
+      new google.maps.LatLng(place.swlat, place.swlng),
+      new google.maps.LatLng(place.nelat, place.nelng)
+    )
+    this.fitBounds(bounds)
+  } else {
+    this.setCenter(new google.maps.LatLng(place.latitude, place.longitude));
+  }
+  
+  if (options.kml && options.kml.length > 0) {
+    var kml = new google.maps.KmlLayer(options.kml, {suppressInfoWindows: true, preserveViewport: true})
+    this.addOverlay(place.name + " boundary", kml)
+    if (options.click) {
+      google.maps.event.addListener(kml, 'click', options.click)
+    }
+  }
+}
 // 
 // google.maps.Map.prototype.addPlaces = function(places, options) {
 //   var map = this;
@@ -267,6 +304,8 @@ google.maps.Map.prototype.buildObservationInfoWindow = function(observation) {
   var photoURL
   if (typeof(observation.image_url) != 'undefined' && observation.image_url != null) {
     photoURL = observation.image_url
+  } else if (typeof(observation.obs_image_url) != 'undefined' && observation.obs_image_url != null) {
+    photoURL = observation.obs_image_url
   } else if (typeof(observation.photos) != 'undefined' && observation.photos.length > 0) {
     photoURL = observation.photos[0].square_url
   }
@@ -443,7 +482,7 @@ iNaturalist.Map.createObservationIcon = function(options) {
   if (options.observation) {
     var iconSet = options.observation.coordinates_obscured ? 'STEMLESS_ICONS' : 'ICONS'
     var iconicTaxonIconsSet = options.observation.coordinates_obscured ? 'STEMLESS_ICONIC_TAXON_ICONS' : 'ICONIC_TAXON_ICONS'
-    if (options.observation.iconic_taxon) {
+    if (options.observation.iconic_taxon && options.observation.iconic_taxon.name) {
       iconPath = iNaturalist.Map[iconicTaxonIconsSet][options.observation.iconic_taxon.name];
     } else {
       iconPath = iNaturalist.Map[iconSet]['unknown34'];
@@ -615,21 +654,40 @@ iNaturalist.Map.builtPlacesMapType = function(map, options) {
   return PlacesMapType
 }
 
+// Haversine distance calc, adapted from http://www.movable-type.co.uk/scripts/latlong.html
+iNaturalist.Map.distanceInMeters = function(lat1, lon1, lat2, lon2) {
+  var earthRadius = 6370997, // m 
+      degreesPerRadian = 57.2958,
+      dLat = (lat2-lat1) / degreesPerRadian,
+      dLon = (lon2-lon1) / degreesPerRadian,
+      lat1 = lat1 / degreesPerRadian,
+      lat2 = lat2 / degreesPerRadian
+
+  var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+          Math.sin(dLon/2) * Math.sin(dLon/2) * Math.cos(lat1) * Math.cos(lat2); 
+  var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+  var d = earthRadius * c;
+  
+  return d
+}
+
 iNaturalist.FullScreenControl = function(map) {
-  var controlDiv = document.createElement('DIV')
+  var controlDiv = document.createElement('DIV'),
+      enter = '<span class="ui-icon ui-icon-extlink">Full screen</span>',
+      exit = '<span class="ui-icon ui-icon-arrow-1-sw inlineblock"></span> Exit full screen'
   controlDiv.style.padding = '5px';
-  var controlUI = $('<div>Full screen</div>').addClass('gmapv3control')
+  var controlUI = $('<div></div>').html(enter).addClass('gmapv3control')
   controlDiv.appendChild(controlUI.get(0))
   
   controlUI.toggle(function() {
     var oldCenter = map.getCenter()
-    $(this).html('Exit full screen').css('font-weight', 'bold')
+    $(this).html(exit).css('font-weight', 'bold')
     $(map.getDiv()).addClass('fullscreen')
     google.maps.event.trigger(map, 'resize')
     map.setCenter(oldCenter)
   }, function() {
     var oldCenter = map.getCenter()
-    $(this).html('Full screen').css('font-weight', 'normal')
+    $(this).html(enter).css('font-weight', 'normal')
     $(map.getDiv()).removeClass('fullscreen')
     google.maps.event.trigger(map, 'resize')
     map.setCenter(oldCenter)
@@ -664,18 +722,22 @@ iNaturalist.OverlayControl.prototype.addOverlay = function(lyr) {
       name = lyr.name,
       id = lyr.id || name,
       overlay = lyr.overlay,
-      checkbox = $('<input type="checkbox"></input>')
-        .attr('id', id)
-        .attr('name', name)
-        .attr('checked', overlay.getMap()),
+      checkbox = $('<input type="checkbox"></input>'),
       label = $('<label></label>').attr('for', id).html(name),
       li = $('<li></li>')
+  checkbox
+    .attr('id', id)
+    .attr('name', name)
+    .attr('checked', overlay.getMap())
   checkbox.click(function() {
     var name = $(this).attr('name'),
         overlay = map.getOverlay(name).overlay
     overlay.setMap(overlay.getMap() ? null : map)
   })
   li.append(checkbox, label)
+  if (lyr.description) {
+    li.append($('<div></div>').addClass('small meta').css('margin-left', '1.5em').html(lyr.description))
+  }
   ul.append(li)
 }
 
@@ -685,9 +747,10 @@ google.maps.Map.prototype.addOverlay = function(name, overlay, options) {
   this.overlays.push({
     name: name,
     overlay: overlay,
-    id: options.id
+    id: options.id,
+    description: options.description
   })
-  if (overlay.setMap) { overlay.setMap(this) }
+  if (overlay.setMap && !options.hidden) { overlay.setMap(this) }
 }
 google.maps.Map.prototype.removeOverlay = function(name) {
   if (!this.overlays) { return }
@@ -709,7 +772,8 @@ iNaturalist.Map.ICONS = {
   iNatGreen34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_iNatGreen.png"),
   OrangeRed34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_OrangeRed.png"),
   DarkMagenta34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_DarkMagenta.png"),
-  unknown34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_unknown.png")
+  unknown34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_unknown.png"),
+  ChromistaBrown34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_ChromistaBrown.png")
 };
 
 iNaturalist.Map.STEMLESS_ICONS = {
@@ -718,7 +782,8 @@ iNaturalist.Map.STEMLESS_ICONS = {
   iNatGreen34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_stemless_iNatGreen.png"),
   OrangeRed34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_stemless_OrangeRed.png"),
   DarkMagenta34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_stemless_DarkMagenta.png"),
-  unknown34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_stemless_unknown.png")
+  unknown34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_stemless_unknown.png"),
+  ChromistaBrown34: new google.maps.MarkerImage("/images/mapMarkers/mm_34_stemless_ChromistaBrown.png")
 };
 
 iNaturalist.Map.ICONIC_TAXON_ICONS = {
@@ -733,7 +798,8 @@ iNaturalist.Map.ICONIC_TAXON_ICONS = {
   Actinopterygii: iNaturalist.Map.ICONS.DodgerBlue34,
   Mollusca: iNaturalist.Map.ICONS.OrangeRed34,
   Insecta: iNaturalist.Map.ICONS.OrangeRed34,
-  Arachnida: iNaturalist.Map.ICONS.OrangeRed34
+  Arachnida: iNaturalist.Map.ICONS.OrangeRed34,
+  Chromista: iNaturalist.Map.ICONS.ChromistaBrown34
 };
 
 iNaturalist.Map.STEMLESS_ICONIC_TAXON_ICONS = {
@@ -748,7 +814,8 @@ iNaturalist.Map.STEMLESS_ICONIC_TAXON_ICONS = {
   Actinopterygii: iNaturalist.Map.STEMLESS_ICONS.DodgerBlue34,
   Mollusca: iNaturalist.Map.STEMLESS_ICONS.OrangeRed34,
   Insecta: iNaturalist.Map.STEMLESS_ICONS.OrangeRed34,
-  Arachnida: iNaturalist.Map.STEMLESS_ICONS.OrangeRed34
+  Arachnida: iNaturalist.Map.STEMLESS_ICONS.OrangeRed34,
+  Chromista: iNaturalist.Map.STEMLESS_ICONS.ChromistaBrown34
 };
 
 iNaturalist.Map.ICONIC_TAXON_COLORS = {
@@ -763,7 +830,8 @@ iNaturalist.Map.ICONIC_TAXON_COLORS = {
   Actinopterygii: '#1E90FF',
   Mollusca: '#FF4500', //'OrangeRed',
   Insecta: '#FF4500',
-  Arachnida: '#FF4500'
+  Arachnida: '#FF4500',
+  Chromista: '#993300'
 }
 
 

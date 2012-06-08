@@ -5,9 +5,12 @@ class Comment < ActiveRecord::Base
   
   validates_length_of :body, :within => 1..5000, :message => "can't be blank"
   
-  after_create :deliver_notification
+  # after_create :deliver_notification
   after_create :update_parent_counter_cache
   after_destroy :update_parent_counter_cache
+  
+  notifies_subscribers_of :parent, :notification => "activity", :include_owner => true
+  auto_subscribes :user, :to => :parent
   
   named_scope :by, lambda {|user| 
     {:conditions => ["comments.user_id = ?", user]}}
@@ -21,7 +24,7 @@ class Comment < ActiveRecord::Base
   
   def deliver_notification
     return true unless parent.respond_to?(:user_id) && parent.user_id != user_id && 
-      parent.user && !parent.user.email.blank? && parent.user.preferences.comment_email_notification 
+      parent.user && !parent.user.email.blank? && parent.user.prefers_comment_email_notification?
     Emailer.send_later(:deliver_comment_notification, self)
     true
   end

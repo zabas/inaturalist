@@ -172,8 +172,7 @@ describe Identification, "deletion" do
     @observation.taxon_id.should be(nil)
   end
   
-  it "should decrement the observation's num_identification_agreements if " +
-     "this was an agreement" do
+  it "should decrement the observation's num_identification_agreements if this was an agreement" do
     @observation.reload
     @observation.num_identification_agreements.should == 1
     @identification.destroy
@@ -183,7 +182,6 @@ describe Identification, "deletion" do
   
   it "should decrement the observations num_identification_disagreements if this was a disagreement" do
     ident = Identification.make(:observation => @observation)
-    puts "ident was invalid: #{ident.errors.full_messages.join(', ')}" unless ident.valid?
     @observation.reload
     @observation.num_identification_disagreements.should >= 1
     num_identification_disagreements = @observation.num_identification_disagreements
@@ -231,13 +229,33 @@ describe Identification, "deletion" do
     o.quality_grade.should == Observation::CASUAL_GRADE
   end
   
+  it "should queue a job to update project lists if owners ident" do
+    o = make_research_grade_observation
+    Delayed::Job.delete_all
+    stamp = Time.now
+    o.identifications.by(o.user).first.destroy
+    Delayed::Job.delete_all
+    
+    Identification.make(:user => o.user, :observation => o, :taxon => Taxon.make)
+    jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
+    
+    pattern = /LOAD;ProjectList\nmethod\: \:refresh_with_observation\n/
+    job = jobs.detect{|j| j.handler =~ pattern}
+    job.should_not be_blank
+    # puts job.handler.inspect
+  end
+  
   it "should queue a job to update check lists if changed from research grade" do
     o = make_research_grade_observation
     Delayed::Job.delete_all
     stamp = Time.now
     o.identifications.by(o.user).first.destroy
     jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
-    jobs.select{|j| j.handler =~ /refresh_with_observation/}.should_not be_blank
+    
+    pattern = /LOAD;CheckList\nmethod\: \:refresh_with_observation\n/
+    job = jobs.detect{|j| j.handler =~ pattern}
+    job.should_not be_blank
+    # puts job.handler.inspect
   end
   
   it "should queue a job to update check lists if research grade" do
@@ -250,7 +268,24 @@ describe Identification, "deletion" do
     o.reload
     o.quality_grade.should == Observation::RESEARCH_GRADE
     jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
-    jobs.select{|j| j.handler =~ /refresh_with_observation/}.should_not be_blank
+    pattern = /LOAD;CheckList\nmethod\: \:refresh_with_observation\n/
+    job = jobs.detect{|j| j.handler =~ pattern}
+    job.should_not be_blank
+    # puts job.handler.inspect
   end
   
+  it "should nilify curator_identification_id on project observations" do
+    o = Observation.make
+    p = Project.make
+    pu = ProjectUser.make(:user => o.user, :project => p)
+    po = ProjectObservation.make(:observation => o, :project => p)
+    i = Identification.make(:user => p.user, :observation => o)
+    Identification.run_update_curator_identification(i)
+    po.reload
+    po.curator_identification.should_not be_blank
+    po.curator_identification_id.should == i.id
+    i.destroy
+    po.reload
+    po.curator_identification_id.should be_blank
+  end
 end

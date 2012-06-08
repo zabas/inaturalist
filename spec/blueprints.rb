@@ -55,6 +55,23 @@ Observation.blueprint do
   user
 end
 
+ObservationField.blueprint do
+  name { Sham.title }
+  datatype 'text'
+  user
+end
+
+ObservationFieldValue.blueprint do
+  observation
+  observation_field
+  value "foo"
+end
+
+ObservationPhoto.blueprint do
+  observation
+  photo
+end
+
 Photo.blueprint do
   user
   native_photo_id { rand(1000) }
@@ -62,7 +79,7 @@ end
 
 Place.blueprint do
   name { Sham.title }
-  latitude { rand(180) }
+  latitude { rand(90) }
   longitude { rand(180) }
 end
 
@@ -149,6 +166,12 @@ end
 TaxonRange.blueprint do
   taxon
   source
+end
+
+Update.blueprint do
+  subscriber
+  resource { Observation.make }
+  notifier { Comment.make(:parent => self.resource) }
 end
 
 User.blueprint do

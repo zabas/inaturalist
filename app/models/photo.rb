@@ -4,22 +4,36 @@ class Photo < ActiveRecord::Base
   has_many :observations, :through => :observation_photos
   
   attr_accessor :api_response
+  
+  # licensing extras
+  attr_accessor :make_license_default
+  attr_accessor :make_licenses_same
+  MASS_ASSIGNABLE_ATTRIBUTES = [:make_license_default, :make_licenses_same]
+  
   cattr_accessor :descendent_classes
   cattr_accessor :remote_descendent_classes
+  
+  before_save :set_license
+  after_save :update_default_license,
+             :update_all_licenses
   
   COPYRIGHT = 0
   NO_COPYRIGHT = 7
   
   LICENSE_INFO = {
-    0 => {:short => "(c)", :name => "Copyright", :url => "http://en.wikipedia.org/wiki/Copyright"},
-    1 => {:short => "CC BY-NC-SA", :name => "Attribution-NonCommercial-ShareAlike License", :url => "http://creativecommons.org/licenses/by-nc-sa/2.0/"},
-    2 => {:short => "CC BY-NC", :name => "Attribution-NonCommercial License", :url => "http://creativecommons.org/licenses/by-nc/2.0/"},
-    3 => {:short => "CC BY-NC-ND", :name => "Attribution-NonCommercial-NoDerivs License", :url => "http://creativecommons.org/licenses/by-nc-nd/2.0/"},
-    4 => {:short => "CC BY", :name => "Attribution License", :url => "http://creativecommons.org/licenses/by/2.0/"},
-    5 => {:short => "CC BY-SA", :name => "Attribution-ShareAlike License", :url => "http://creativecommons.org/licenses/by-sa/2.0/"},
-    6 => {:short => "CC BY-ND", :name => "Attribution-NoDerivs License", :url => "http://creativecommons.org/licenses/by-nd/2.0/"},
-    7 => {:short => "PD", :name => "Public domain, no known copyright restrictions", :url => "http://flickr.com/commons/usage/"}
+    0 => {:code => "C",                       :short => "(c)",          :name => "Copyright", :url => "http://en.wikipedia.org/wiki/Copyright"},
+    1 => {:code => Observation::CC_BY_NC_SA,  :short => "CC BY-NC-SA",  :name => "Attribution-NonCommercial-ShareAlike License", :url => "http://creativecommons.org/licenses/by-nc-sa/3.0/"},
+    2 => {:code => Observation::CC_BY_NC,     :short => "CC BY-NC",     :name => "Attribution-NonCommercial License", :url => "http://creativecommons.org/licenses/by-nc/3.0/"},
+    3 => {:code => Observation::CC_BY_NC_ND,  :short => "CC BY-NC-ND",  :name => "Attribution-NonCommercial-NoDerivs License", :url => "http://creativecommons.org/licenses/by-nc-nd/3.0/"},
+    4 => {:code => Observation::CC_BY,        :short => "CC BY",        :name => "Attribution License", :url => "http://creativecommons.org/licenses/by/3.0/"},
+    5 => {:code => Observation::CC_BY_SA,     :short => "CC BY-SA",     :name => "Attribution-ShareAlike License", :url => "http://creativecommons.org/licenses/by-sa/3.0/"},
+    6 => {:code => Observation::CC_BY_ND,     :short => "CC BY-ND",     :name => "Attribution-NoDerivs License", :url => "http://creativecommons.org/licenses/by-nd/3.0/"},
+    7 => {:code => "PD",                      :short => "PD",           :name => "Public domain, no known copyright restrictions", :url => "http://flickr.com/commons/usage/"}
   }
+  
+  def to_s
+    "<#{self.class} id: #{id}, user_id: #{user_id}>"
+  end
   
   def validate
     if user.blank? && self.license == 0
@@ -43,6 +57,13 @@ class Photo < ActiveRecord::Base
     end
   end
   
+  def set_license
+    return true unless license.blank?
+    return true unless user
+    self.license = Photo.license_number_for_code(user.preferred_photo_license)
+    true
+  end
+  
   # Return a string with attribution info about this photo
   def attribution
     name = if !native_realname.blank?
@@ -50,7 +71,7 @@ class Photo < ActiveRecord::Base
     elsif !native_username.blank?
       native_username
     elsif (o = observations.first)
-      o.user.login
+      o.user.name || o.user.login
     else
       "anonymous Flickr user"
     end
@@ -63,6 +84,14 @@ class Photo < ActiveRecord::Base
   
   def license_name
     LICENSE_INFO[license.to_i].try(:[], :name)
+  end
+  
+  def license_code
+    LICENSE_INFO[license.to_i].try(:[], :code)
+  end
+  
+  def license_url
+    LICENSE_INFO[license.to_i].try(:[], :url)
   end
   
   def copyrighted?
@@ -97,6 +126,31 @@ class Photo < ActiveRecord::Base
     nil
   end
   
+  def update_attributes(attributes)
+    MASS_ASSIGNABLE_ATTRIBUTES.each do |a|
+      self.send("#{a}=", attributes.delete(a.to_s)) if attributes.has_key?(a.to_s)
+      self.send("#{a}=", attributes.delete(a)) if attributes.has_key?(a)
+    end
+    super(attributes)
+  end
+  
+  def update_default_license
+    return true unless [true, "1", "true"].include?(@make_license_default)
+    user.update_attribute(:preferred_photo_license, Photo.license_code_for_number(license))
+    true
+  end
+  
+  def update_all_licenses
+    return true unless [true, "1", "true"].include?(@make_licenses_same)
+    Photo.update_all(["license = ?", license], ["user_id = ?", user_id])
+    true
+  end
+  
+  def editable_by?(user)
+    return false if user.blank?
+    user.id == user_id || observations.exists?(:user_id => user.id)
+  end
+  
   # Retrieve info about a photo from its native source given its native id.  
   # Should be implemented by descendents
   def self.get_api_response(native_photo_id, options = {})
@@ -118,6 +172,15 @@ class Photo < ActiveRecord::Base
         photo.destroy
       end
     end
+  end
+  
+  def self.license_number_for_code(code)
+    return COPYRIGHT if code.blank?
+    LICENSE_INFO.detect{|k,v| v[:code] == code}.try(:first)
+  end
+  
+  def self.license_code_for_number(number)
+    LICENSE_INFO[number].try(:[], :code)
   end
   
 end

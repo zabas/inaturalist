@@ -29,10 +29,39 @@ describe Observation, "creation" do
     @observation.time_observed_at.in_time_zone(@observation.time_zone).hour.should be(22)
   end
   
+  it "should parse time from strings like 2011-12-23T11:52:06-0500" do
+    @observation.observed_on_string = '2011-12-23T11:52:06-0500'
+    @observation.save
+    @observation.time_observed_at.in_time_zone(@observation.time_zone).hour.should be(11)
+  end
+  
+  it "should parse time from strings like 2011-12-23T11:52:06.123" do
+    @observation.observed_on_string = '2011-12-23T11:52:06.123'
+    @observation.save
+    @observation.time_observed_at.in_time_zone(@observation.time_zone).hour.should be(11)
+  end
+  
+  it "should parse time from strings like Fri Apr 06 2012 16:23:35 GMT-0500 (GMT-05:00)" do
+    @observation.observed_on_string = "Fri Apr 06 2012 16:23:35 GMT-0500 (GMT-05:00)"
+    @observation.save
+    @observation.observed_on.day.should be(6)
+    @observation.time_observed_at.in_time_zone(@observation.time_zone).hour.should be(16)
+    zone = ActiveSupport::TimeZone[@observation.time_zone]
+    zone.formatted_offset.should == "-05:00"
+  end
+  
   it "should parse a time zone from a code" do
     @observation.observed_on_string = 'October 30, 2008 10:31PM EST'
     @observation.save
     @observation.time_zone.should == ActiveSupport::TimeZone['Eastern Time (US & Canada)'].name
+  end
+  
+  it "should parse time zone from strings like 2011-12-23T11:52:06-0500" do
+    @observation.observed_on_string = '2011-12-23T11:52:06-0500'
+    @observation.save
+    zone = ActiveSupport::TimeZone[@observation.time_zone]
+    zone.should_not be_blank
+    zone.formatted_offset.should == "-05:00"
   end
   
   it "should not save a time if one wasn't specified" do
@@ -64,11 +93,12 @@ describe Observation, "creation" do
     @observation.identifications.first.taxon.should == @observation.taxon
   end
   
-  it "should queue a DJ job for the life list" do
+  it "should queue a DJ job to refresh lists" do
+    Delayed::Job.delete_all
     stamp = Time.now
     Observation.make(:taxon => Taxon.make)
     jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
-    jobs.select{|j| j.handler =~ /refresh_for_user/}.should_not be_blank
+    jobs.select{|j| j.handler =~ /;List.*refresh_with_observation/m}.should_not be_blank
   end
   
   it "should properly parse relative datetimes like '2 days ago'" do
@@ -152,54 +182,6 @@ describe Observation, "creation" do
     @observation.user.observations_count.should == old_count + 1
   end
   
-  describe "species_guess parsing" do
-    it "should choose a taxon if the guess corresponds to a unique taxon" do
-      taxon = Taxon.make
-      @observation.taxon = nil
-      @observation.species_guess = taxon.name
-      @observation.save
-      @observation.taxon_id.should == taxon.id
-    end
-
-    it "should choose a taxon from species_guess if exact matches form a subtree" do
-      taxon = Taxon.make(:rank => "species", :name => "Spirolobicus bananaensis")
-      child = Taxon.make(:rank => "subspecies", :parent => taxon, :name => "#{taxon.name} foo")
-      common_name = "Spiraled Banana Shrew"
-      TaxonName.make(:taxon => taxon, :name => common_name, :lexicon => TaxonName::LEXICONS[:ENGLISH])
-      TaxonName.make(:taxon => child, :name => common_name, :lexicon => TaxonName::LEXICONS[:ENGLISH])
-      @observation.taxon = nil
-      @observation.species_guess = common_name
-      @observation.save
-      @observation.taxon_id.should == taxon.id
-    end
-
-    it "should not choose a taxon from species_guess if exact matches don't form a subtree" do
-      taxon = Taxon.make(:rank => "species", :name => "Spirolobicus bananaensis")
-      child = Taxon.make(:rank => "subspecies", :parent => taxon, :name => "#{taxon.name} foo")
-      taxon2 = Taxon.make(:rank => "species")
-      common_name = "Spiraled Banana Shrew"
-      TaxonName.make(:taxon => taxon, :name => common_name, :lexicon => TaxonName::LEXICONS[:ENGLISH])
-      TaxonName.make(:taxon => child, :name => common_name, :lexicon => TaxonName::LEXICONS[:ENGLISH])
-      TaxonName.make(:taxon => taxon2, :name => common_name, :lexicon => TaxonName::LEXICONS[:ENGLISH])
-      @observation.taxon = nil
-      @observation.species_guess = common_name
-      @observation.save
-      @observation.taxon_id.should be_blank
-    end
-
-    it "should choose a taxon from species_guess if exact matches form a subtree regardless of case" do
-      taxon = Taxon.make(:rank => "species", :name => "Spirolobicus bananaensis")
-      child = Taxon.make(:rank => "subspecies", :parent => taxon, :name => "#{taxon.name} foo")
-      common_name = "Spiraled Banana Shrew"
-      TaxonName.make(:taxon => taxon, :name => common_name.downcase, :lexicon => TaxonName::LEXICONS[:ENGLISH])
-      TaxonName.make(:taxon => child, :name => common_name, :lexicon => TaxonName::LEXICONS[:ENGLISH])
-      @observation.taxon = nil
-      @observation.species_guess = common_name
-      @observation.save
-      @observation.taxon_id.should == taxon.id
-    end
-  end
-  
   it "should allow lots of sigfigs" do
     lat =  37.91143999
     lon = -122.2687819
@@ -271,21 +253,16 @@ describe Observation, "updating" do
     end.empty?.should be(true)
   end
   
-  it "should update the owner's identification if the taxon has changed" do
-    owners_ident = @observation.identifications.select do |ident|
-      ident.user_id == @observation.user_id
-    end.first
-    owners_ident.taxon.name.should == @observation.taxon.name
-    
-    psre = Taxon.make
-    @observation.taxon.should_not be(psre)
-    @observation.taxon = psre
-    @observation.save
-    @observation.reload
-    owners_ident = @observation.identifications.select do |ident|
-      ident.user_id == @observation.user_id
-    end.first
-    owners_ident.taxon.should == psre
+  it "should replace the owner's identification if the taxon has changed" do
+    t1 = Taxon.make
+    t2 = Taxon.make
+    o = Observation.make(:taxon => t1)
+    old_owners_ident = o.identifications.detect{|ident| ident.user_id == o.user_id}
+    o.update_attributes(:taxon => t2)
+    o.reload
+    new_owners_ident = o.identifications.detect{|ident| ident.user_id == o.user_id}
+    new_owners_ident.should_not be_blank
+    new_owners_ident.id.should_not be(old_owners_ident.id)
   end
 
   # # Handled by DJ
@@ -344,13 +321,6 @@ describe Observation, "updating" do
     obs.iconic_taxon.should be_blank
   end
   
-  it "should nilify positional_accuracy if accuracy not set and position changed" do
-    obs = Observation.make(:latitude => 1, :longitude => 1, :positional_accuracy => 10)
-    obs.update_attributes(:latitude => 2)
-    obs.reload
-    obs.positional_accuracy.should be_blank
-  end
-  
   it "should queue refresh jobs for associated project lists if the taxon changed" do
     o = Observation.make(:taxon => Taxon.make)
     po = ProjectObservation.make(:observation => o)
@@ -358,8 +328,8 @@ describe Observation, "updating" do
     o.update_attributes(:taxon => Taxon.make)
     stamp = Time.now
     jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
-    # puts jobs.detect{|j| j.handler =~ /\:refresh_project_list\n/}.handler.inspect
-    jobs.select{|j| j.handler =~ /\:refresh_project_list\n/}.should_not be_blank
+    # puts jobs.map(&:handler).inspect
+    jobs.select{|j| j.handler =~ /ProjectList.*\:refresh_with_observation/m}.should_not be_blank
   end
   
   it "should queue refresh job for check lists if the coordinates changed" do
@@ -378,8 +348,22 @@ describe Observation, "updating" do
     stamp = Time.now
     o.update_attributes(:taxon => Taxon.make)
     jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
-    # puts jobs.detect{|j| j.handler =~ /\:refresh_project_list\n/}.handler.inspect
-    jobs.select{|j| j.handler =~ /\:refresh_with_observation\n/}.should_not be_blank
+    pattern = /LOAD;CheckList\nmethod\: \:refresh_with_observation\n/
+    job = jobs.detect{|j| j.handler =~ pattern}
+    job.should_not be_blank
+    # puts job.handler.inspect
+  end
+  
+  it "should queue refresh job for project lists if the taxon changed" do
+    o = make_research_grade_observation
+    Delayed::Job.delete_all
+    stamp = Time.now
+    o.update_attributes(:taxon => Taxon.make)
+    jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
+    pattern = /LOAD;ProjectList\nmethod\: \:refresh_with_observation\n/
+    job = jobs.detect{|j| j.handler =~ pattern}
+    job.should_not be_blank
+    # puts job.handler.inspect
   end
   
   it "should not allow impossible coordinates" do
@@ -411,6 +395,13 @@ describe Observation, "updating" do
       o.quality_grade.should == Observation::RESEARCH_GRADE
     end
     
+    it "should become casual when taxon changes" do
+      o = make_research_grade_observation
+      new_taxon = Taxon.make
+      o.update_attributes(:taxon => new_taxon)
+      o.quality_grade.should == Observation::CASUAL_GRADE
+    end
+    
     it "should become casual when it isn't research" do
       o = Observation.make(:taxon => Taxon.make, :latitude => 1, :longitude => 1, :observed_on_string => "yesterday")
       i = Identification.make(:observation => o, :taxon => o.taxon)
@@ -435,6 +426,103 @@ describe Observation, "destruction" do
     @observation.destroy
     user.reload
     user.observations_count.should == old_count - 1
+  end
+  
+  it "should queue a DJ job to refresh lists" do
+    Delayed::Job.delete_all
+    stamp = Time.now
+    Observation.make(:taxon => Taxon.make)
+    jobs = Delayed::Job.all(:conditions => ["created_at >= ?", stamp])
+    jobs.select{|j| j.handler =~ /;List.*refresh_with_observation/m}.should_not be_blank
+  end
+end
+
+describe Observation, "species_guess parsing" do
+  before(:each) do
+    @observation = Observation.make
+  end
+  
+  it "should choose a taxon if the guess corresponds to a unique taxon" do
+    taxon = Taxon.make
+    @observation.taxon = nil
+    @observation.species_guess = taxon.name
+    @observation.save
+    @observation.taxon_id.should == taxon.id
+  end
+
+  it "should choose a taxon from species_guess if exact matches form a subtree" do
+    taxon = Taxon.make(:rank => "species", :name => "Spirolobicus bananaensis")
+    child = Taxon.make(:rank => "subspecies", :parent => taxon, :name => "#{taxon.name} foo")
+    common_name = "Spiraled Banana Shrew"
+    TaxonName.make(:taxon => taxon, :name => common_name, :lexicon => TaxonName::LEXICONS[:ENGLISH])
+    TaxonName.make(:taxon => child, :name => common_name, :lexicon => TaxonName::LEXICONS[:ENGLISH])
+    @observation.taxon = nil
+    @observation.species_guess = common_name
+    @observation.save
+    @observation.taxon_id.should == taxon.id
+  end
+
+  it "should not choose a taxon from species_guess if exact matches don't form a subtree" do
+    taxon = Taxon.make(:rank => "species", :name => "Spirolobicus bananaensis")
+    child = Taxon.make(:rank => "subspecies", :parent => taxon, :name => "#{taxon.name} foo")
+    taxon2 = Taxon.make(:rank => "species")
+    common_name = "Spiraled Banana Shrew"
+    TaxonName.make(:taxon => taxon, :name => common_name, :lexicon => TaxonName::LEXICONS[:ENGLISH])
+    TaxonName.make(:taxon => child, :name => common_name, :lexicon => TaxonName::LEXICONS[:ENGLISH])
+    TaxonName.make(:taxon => taxon2, :name => common_name, :lexicon => TaxonName::LEXICONS[:ENGLISH])
+    @observation.taxon = nil
+    @observation.species_guess = common_name
+    @observation.save
+    @observation.taxon_id.should be_blank
+  end
+
+  it "should choose a taxon from species_guess if exact matches form a subtree regardless of case" do
+    taxon = Taxon.make(:rank => "species", :name => "Spirolobicus bananaensis")
+    child = Taxon.make(:rank => "subspecies", :parent => taxon, :name => "#{taxon.name} foo")
+    common_name = "Spiraled Banana Shrew"
+    TaxonName.make(:taxon => taxon, :name => common_name.downcase, :lexicon => TaxonName::LEXICONS[:ENGLISH])
+    TaxonName.make(:taxon => child, :name => common_name, :lexicon => TaxonName::LEXICONS[:ENGLISH])
+    @observation.taxon = nil
+    @observation.species_guess = common_name
+    @observation.save
+    @observation.taxon_id.should == taxon.id
+  end
+  
+  it "should not make a guess for problematic names" do
+    Taxon::PROBLEM_NAMES.each do |name|
+      t = Taxon.make(:name => name.capitalize)
+      o = Observation.make(:species_guess => name)
+      o.taxon_id.should_not == t.id
+    end
+  end
+  
+  it "should choose a taxon from a parenthesized scientific name" do
+    name = "Northern Pygmy Owl (Glaucidium gnoma)"
+    t = Taxon.make(:name => "Glaucidium gnoma")
+    o = Observation.make(:species_guess => name)
+    o.taxon_id.should == t.id
+  end
+  
+  it "should choose a taxon from blah sp" do
+    name = "Clarkia sp"
+    t = Taxon.make(:name => "Clarkia")
+    o = Observation.make(:species_guess => name)
+    o.taxon_id.should == t.id
+    
+    name = "Clarkia sp."
+    o = Observation.make(:species_guess => name)
+    o.taxon_id.should == t.id
+  end
+  
+  it "should choose a taxon from blah ssp" do
+    name = "Clarkia ssp"
+    t = Taxon.make(:name => "Clarkia")
+    o = Observation.make(:species_guess => name)
+    o.taxon_id.should == t.id
+    
+    name = "Clarkia ssp."
+    o = Observation.make(:species_guess => name)
+    o.taxon_id.should == t.id
   end
 end
 
@@ -1004,4 +1092,81 @@ describe Observation do
     end
   end
   
+end
+
+describe Observation, "set_out_of_range" do
+  before(:each) do
+    @taxon = Taxon.make
+    @taxon_range = TaxonRange.make(
+      :taxon => @taxon, 
+      :geom => MultiPolygon.from_ewkt("MULTIPOLYGON(((0 0,0 1,1 1,1 0,0 0)))")
+    )
+  end
+  it "should set to false if observation intersects known range" do
+    o = Observation.make(:taxon => @taxon, :latitude => 0.5, :longitude => 0.5)
+    o.set_out_of_range
+    o.out_of_range.should == false
+  end
+  it "should set to true if observation does not intersect known range" do
+    o = Observation.make(:taxon => @taxon, :latitude => 2, :longitude => 2)
+    o.set_out_of_range
+    o.out_of_range.should == true
+  end
+  it "should set to null if observation does not have a taxon" do
+    o = Observation.make
+    o.set_out_of_range
+    o.out_of_range.should == nil
+  end
+  it "should set to null if taxon does not have a range" do
+    t = Taxon.make
+    o = Observation.make(:taxon => t)
+    o.set_out_of_range
+    o.out_of_range.should == nil
+  end
+end
+
+describe Observation, "out_of_range" do
+  it "should get set to false immediately if taxon set to nil" do
+    o = Observation.make(:taxon => Taxon.make, :out_of_range => true)
+    o.should be_out_of_range
+    o.update_attributes(:taxon => nil)
+    o.should_not be_out_of_range
+  end
+end
+
+describe Observation, "license" do
+  it "should use the user's default observation license" do
+    u = User.make
+    u.preferred_observation_license = "CC-BY-NC"
+    u.save
+    o = Observation.make(:user => u)
+    o.license.should == u.preferred_observation_license
+  end
+  
+  it "should update default license when requested" do
+    u = User.make
+    u.preferred_observation_license.should be_blank
+    o = Observation.make(:user => u, :make_license_default => true, :license => Observation::CC_BY_NC)
+    u.reload
+    u.preferred_observation_license.should == Observation::CC_BY_NC
+  end
+  
+  it "should update all other observations when requested" do
+    u = User.make
+    o1 = Observation.make(:user => u)
+    o2 = Observation.make(:user => u)
+    o1.license.should be_blank
+    o2.make_licenses_same = true
+    o2.license = Observation::CC_BY_NC
+    o2.save
+    o1.reload
+    o1.license.should == Observation::CC_BY_NC
+  end
+  
+  it "should nilify if not a license" do
+    o = Observation.make(:license => Observation::CC_BY)
+    o.update_attributes(:license => "on")
+    o.reload
+    o.license.should be_blank
+  end
 end

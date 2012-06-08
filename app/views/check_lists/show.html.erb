@@ -51,10 +51,16 @@
       <%= formatted_user_text(@list.description) %>
     </div>
 
-    <% if !@list.rules.empty? && @list.rules.first.operand.is_a?(Taxon) -%>
+    <% if !@list.rules.empty? && (taxon = @list.rules.first.operand) && taxon.is_a?(Taxon) -%>
       <div id="life_list_taxon" class="life_list_taxon description">
         <%= taxon_image(@list.rules.first.operand) %>
-        This is a check list of
+        This is a
+        <% if @list.comprehensive? -%>
+          <span class="comprehensive_notice" 
+              data-tip="<strong><%= @list.user || 'iNat' %></strong> believes this is a comprehensive list of <strong><%= taxon.species_or_lower? ? "<i>#{taxon.name}</i>" : taxon.name %></strong> in <strong><%= @list.place.name %></strong>">
+            comprehensive</span>
+        <% end %>
+        check list of
         <%= render :partial => 'shared/taxon', 
                    :locals => { :taxon => @list.rules.first.operand,
                                 :link_url => url_for(@list.rules.first.operand) } %>
@@ -118,11 +124,25 @@
       <%= @list.created_at.to_date.to_s(:long) %>
     </div>
   <% end -%>
+  
+  <div class="clear meta feeds">
+    <strong>Download</strong>
+    <%= link_to "CSV", list_path(@list, :format => 'csv'), 
+      :class => "delayedlink csvlink", 
+      "data-delayed-link-msg" => "Please hold on while the file is generated.  It can take a couple minutes for large lists.",
+      :rel => "nofollow" %>
+      
+    <%= link_to "Taxonomic CSV", list_show_formatted_view_path(@list, :view_type => "taxonomic", :format => "csv"), 
+      :class => "delayedlink csvlink", 
+      "data-delayed-link-msg" => 
+        "Please hold on while the file is generated.  It can take a couple minutes for large lists.",
+      :rel => "nofollow" %>
+  </div>
 </div>
 
 <div class="last column span-7">
   <div id="sidebar">
-    <% if @list.editable_by?(current_user) %>
+    <% if @list.listed_taxa_editable_by?(current_user) %>
       <div id="add" class="clear">
         <%= link_to_function "Add Batch", "$('#add_batch_dialog').jqmShow()", 
           :class => "right small", :style => 'padding-top: 3px' %>
