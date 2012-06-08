@@ -10,6 +10,15 @@ class User < ActiveRecord::Base
   include Authentication::ByCookieToken
   include Authorization::AasmRoles
   
+  # set user.skip_email_validation = true if you want to, um, skip email validation before creating+saving
+  attr_accessor :skip_email_validation
+  attr_accessor :skip_registration_email
+  
+  # licensing extras
+  attr_accessor   :make_observation_licenses_same
+  attr_accessor   :make_photo_licenses_same
+  MASS_ASSIGNABLE_ATTRIBUTES = [:make_observation_licenses_same, :make_photo_licenses_same]
+  
   preference :comment_email_notification, :boolean, :default => true
   preference :identification_email_notification, :boolean, :default => true
   preference :no_email, :boolean, :default => false
