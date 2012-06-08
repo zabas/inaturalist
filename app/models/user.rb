@@ -10,59 +10,20 @@ class User < ActiveRecord::Base
   include Authentication::ByCookieToken
   include Authorization::AasmRoles
   
-  # serialize :preferences, Preferences
+  preference :comment_email_notification, :boolean, :default => true
+  preference :identification_email_notification, :boolean, :default => true
+  preference :no_email, :boolean, :default => false
+  preference :project_invitation_email_notification, :boolean, :default => true
+  preference :lists_by_login_sort, :string, :default => "id"
+  preference :lists_by_login_order, :string, :default => "asc"
+  preference :per_page, :integer, :default => 30
+  preference :gbif_sharing, :boolean, :default => true
+  preference :observation_license, :string
+  preference :photo_license, :string
   
-  # belongs_to :life_list, :dependent => :destroy
-#   has_one  :flickr_identity, :dependent => :destroy
-#   has_one  :picasa_identity, :dependent => :destroy
+  NOTIFICATION_PREFERENCES = %w(comment_email_notification identification_email_notification project_invitation_email_notification)
+  
   has_many :observations, :dependent => :destroy
-  
-  # Some interesting ways to map self-referential relationships in rails
-#   has_many :friendships, :dependent => :destroy
-#   has_many :friends, :through => :friendships
-#   has_many :stalkerships, :class_name => 'Friendship', :foreign_key => 'friend_id', :dependent => :destroy
-#   has_many :followers, :through => :stalkerships,  :source => 'user'
-  
-#   has_many :activity_stream_updates, :class_name => 'ActivityStream', :dependent => :destroy
-#   has_many :activity_streams, :foreign_key => 'subscriber_id'
-  
-#   has_many :lists, :dependent => :destroy
-#   has_many :identifications, :dependent => :destroy
-#   has_many :photos, :dependent => :destroy
-#   has_many :goal_participants, :dependent => :destroy
-#   has_many :goals, :through => :goal_participants
-#   has_many :incomplete_goals,
-#            :source =>  :goal,
-#            :through => :goal_participants,
-#            :conditions => ["goal_participants.goal_completed = 0 " + 
-#                            "AND goals.completed = 0 " +
-#                            "AND (goals.ends_at IS NULL " +
-#                            "OR goals.ends_at > ?)", Time.now]
-#   has_many :completed_goals,
-#            :source => :goal,
-#            :through => :goal_participants,
-#            :conditions => "goal_participants.goal_completed = 1 " +
-#                           "OR goals.completed = 1"
-#   has_many :goal_participants_for_incomplete_goals,
-#            :class_name => "GoalParticipant",
-#            :include => :goal,
-#            :conditions => ["goal_participants.goal_completed = 0 " + 
-#                            "AND goals.completed = 0 " +
-#                            "AND (goals.ends_at IS NULL " +
-#                            "OR goals.ends_at > ?)", Time.now]
-#   has_many :goal_contributions, :through => :goal_participants
-  
-  has_many :posts, :dependent => :destroy
-  has_many :journal_posts, :class_name => Post.to_s, :as => :parent
-  has_many :taxon_links, :dependent => :nullify
-  has_many :comments, :dependent => :destroy
-  has_many :projects, :dependent => :destroy
-  has_many :project_users, :dependent => :destroy
-  has_many :listed_taxa, :dependent => :nullify
-  has_many :invites, :dependent => :nullify
-  has_many :quality_metrics, :dependent => :destroy
-  has_many :sources, :dependent => :nullify
-  has_many :places, :dependent => :nullify
   
   has_attached_file :icon, 
     :styles => { :medium => "300x300>", :thumb => "48x48#", :mini => "16x16#" },

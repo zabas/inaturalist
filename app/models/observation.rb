@@ -1,25 +1,28 @@
 class Observation < ActiveRecord::Base
+  LICENSES = [
+    ["CC-BY", "Attribution", "This license lets others distribute, remix, tweak, and build upon your work, even commercially, as long as they credit you for the original creation. This is the most accommodating of licenses offered. Recommended for maximum dissemination and use of licensed materials."],
+    ["CC-BY-NC", "Attribution-NonCommercial", "This license lets others remix, tweak, and build upon your work non-commercially, and although their new works must also acknowledge you and be non-commercial, they don’t have to license their derivative works on the same terms."],
+    ["CC-BY-SA", "Attribution-ShareAlike", "This license lets others remix, tweak, and build upon your work even for commercial purposes, as long as they credit you and license their new creations under the identical terms. All new works based on yours will carry the same license, so any derivatives will also allow commercial use."],
+    ["CC-BY-ND", "Attribution-NoDerivs", "This license allows for redistribution, commercial and non-commercial, as long as it is passed along unchanged and in whole, with credit to you."],
+    ["CC-BY-NC-SA", "Attribution-NonCommercial-ShareAlike", "This license lets others remix, tweak, and build upon your work non-commercially, as long as they credit you and license their new creations under the identical terms."],
+    ["CC-BY-NC-ND", "Attribution-NonCommercial-NoDerivs", "This license is the most restrictive of the six main licenses, only allowing others to download your works and share them with others as long as they credit you, but they can’t change them in any way or use them commercially."]
+  ]
+  LICENSE_CODES = LICENSES.map{|row| row.first}
+  LICENSES.each do |code, name, description|
+    const_set code.gsub(/\-/, '_'), code
+  end
+  PREFERRED_LICENSES = [CC_BY, CC_BY_NC]
+  
   has_many :observation_photos, :dependent => :destroy
   has_many :photos, :through => :observation_photos
-  
-  # note last_observation and first_observation on listed taxa will get reset 
-  # by CheckList.refresh_with_observation
-  has_many :listed_taxa, :foreign_key => 'last_observation_id'
-  has_many :first_listed_taxa, :class_name => "ListedTaxon", :foreign_key => 'first_observation_id'
-  has_many :first_check_listed_taxa, :class_name => "ListedTaxon", :foreign_key => 'first_observation_id', :conditions => "listed_taxa.place_id IS NOT NULL"
-  
-  has_many :goal_contributions,
-           :as => :contribution,
-           :dependent => :destroy
-  has_many :comments, :as => :parent, :dependent => :destroy
-  has_many :identifications, :dependent => :delete_all
-  has_many :project_observations, :dependent => :destroy
-  has_many :project_invitations, :dependent => :destroy
-  has_many :projects, :through => :project_observations
-  has_many :quality_metrics, :dependent => :destroy
-  has_many :observation_field_values, :dependent => :destroy, :order => "id asc"
-  has_many :observation_fields, :through => :observation_field_values
-  has_many :observation_links
+  # has_many :identifications, :dependent => :delete_all
+  # has_many :project_observations, :dependent => :destroy
+  # has_many :project_invitations, :dependent => :destroy
+  # has_many :projects, :through => :project_observations
+  # has_many :quality_metrics, :dependent => :destroy
+  # has_many :observation_field_values, :dependent => :destroy, :order => "id asc"
+  # has_many :observation_fields, :through => :observation_field_values
+  # has_many :observation_links
   
   define_index do
     indexes taxon.taxon_names.name, :as => :names
@@ -77,10 +80,6 @@ class Observation < ActiveRecord::Base
     fake_latitude fake_longitude num_identification_agreements 
     num_identification_disagreements identifications_most_agree 
     identifications_some_agree identifications_most_disagree projects)
-
-  accepts_nested_attributes_for :observation_field_values, 
-    :allow_destroy => true, 
-    :reject_if => lambda { |attrs| attrs[:value].blank? }
   
   ##
   # Validations

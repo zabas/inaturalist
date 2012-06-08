@@ -79,43 +79,18 @@ Rails::Initializer.run do |config|
   config.gem 'pg'
   config.gem 'will_paginate', :version => '2.3.15'
   config.gem 'rubyist-aasm', :lib => 'aasm', :source => 'http://gems.github.com', :version => '2.0.2'
- # config.gem "GeoRuby", :lib => 'geo_ruby'
- # config.gem "mojombo-chronic", :lib => 'chronic', :source => 'http://gems.github.com'
- # config.gem 'bluecloth'
- # config.gem "htmlentities"
   config.gem "aws-s3", :lib => 'aws/s3'
   config.gem "xml-simple", :lib => 'xmlsimple'
   config.gem "mime-types", :lib => 'mime/types'
   config.gem "mocha"
   config.gem "paperclip"
-#   config.gem "ambethia-smtp-tls", :lib => "smtp-tls", :source => "http://gems.github.com/"
-#   config.gem "flickraw"
-#   config.gem 'rest-client', :lib => 'rest_client'
   config.gem 'hoptoad_notifier'
-#   config.gem "carlosparamio-geoplanet", :lib => 'geoplanet', :source => "http://gems.github.com/"
-#   config.gem 'geoip'
-#   config.gem 'alexvollmer-daemon-spawn', :lib => 'daemon-spawn', :source => "http://gems.github.com/"
-#   config.gem 'nokogiri'
-#   config.gem 'objectify-xml', :lib => 'objectify_xml'
-#   # As of 2010-04-21, TS doesn't work with DJ >= 2.0
-#   # config.gem 'delayed_job', :version => '<= 1.8.5'
   config.gem 'delayed_job'
   config.gem 'thinking-sphinx',
     :lib     => 'thinking_sphinx',
-    # :version => '>= 1.3.11',
-    :version => '<= 1.3.20',
-    :source  => 'http://gemcutter.org'
-#   config.gem 'ts-delayed-delta',
-#     :lib     => 'thinking_sphinx/deltas/delayed_delta',
-#     :version => '>= 1.0.0',
-#     :source  => 'http://gemcutter.org'
-#   config.gem 'ancestry'
-#   config.gem 'machinist'
-#   config.gem 'faker'
-#   config.gem 'fastercsv'
-#   # config.gem 'newrelic_rpm'
+    :version => '< 2'
   config.gem 'delayed_paperclip'
-#  config.gem "friendly_id", :version => "~> 3.2.1"
+  config.gem "preferences"
   
   # Set default time zone to UTC
   config.time_zone = 'UTC'
