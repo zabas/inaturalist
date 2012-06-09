@@ -1,4 +1,60 @@
 class Observation < ActiveRecord::Base
+  has_subscribers :to => {
+    :comments => {:notification => "activity", :include_owner => true},
+    :identifications => {:notification => "activity", :include_owner => true}
+  }
+  notifies_subscribers_of :user, :notification => "created_observations"
+  notifies_subscribers_of :public_places, :notification => "new_observations", :if => lambda {|observation, place, subscription|
+    return true if subscription.taxon_id.blank?
+    return false if observation.taxon.blank?
+    observation.taxon.ancestor_ids.include?(subscription.taxon_id)
+  }
+  acts_as_taggable
+  acts_as_flaggable
+  
+  include Ambidextrous
+  
+  # Set to true if you want to skip the expensive updating of all the user's
+  # lists after saving.  Useful if you're saving many observations at once and
+  # you want to update lists in a batch
+  attr_accessor :skip_refresh_lists, :skip_identifications
+  
+  # Set if you need to set the taxon from a name separate from the species 
+  # guess
+  attr_accessor :taxon_name
+  
+  # licensing extras
+  attr_accessor :make_license_default
+  attr_accessor :make_licenses_same
+  
+  MASS_ASSIGNABLE_ATTRIBUTES = [:make_license_default, :make_licenses_same]
+  
+  M_TO_OBSCURE_THREATENED_TAXA = 10000
+  OUT_OF_RANGE_BUFFER = 5000 # meters
+  PLANETARY_RADIUS = 6370997.0
+  DEGREES_PER_RADIAN = 57.2958
+  FLOAT_REGEX = /[-+]?[0-9]*\.?[0-9]+/
+  COORDINATE_REGEX = /[^\d\,]*?(#{FLOAT_REGEX})[^\d\,]*?/
+  LAT_LON_SEPARATOR_REGEX = /[\,\s]\s*/
+  LAT_LON_REGEX = /#{COORDINATE_REGEX}#{LAT_LON_SEPARATOR_REGEX}#{COORDINATE_REGEX}/
+  
+  PRIVATE = "private"
+  OBSCURED = "obscured"
+  GEOPRIVACIES = [OBSCURED, PRIVATE]
+  GEOPRIVACY_DESCRIPTIONS = {
+    nil => "Everyone can see the coordinates unless the taxon is threatened.",
+    OBSCURED => "Public coordinates shown as a random point within " + 
+      "#{M_TO_OBSCURE_THREATENED_TAXA / 1000}KM of the true coordinates. " +
+      "True coordinates are only visible to you and the curators of projects " + 
+      "to which you add the observation.",
+    PRIVATE => "Coordinates completely hidden from public maps, true " + 
+      "coordinates only visible to you and the curators of projects to " + 
+      "which you add the observation.",
+  }
+  CASUAL_GRADE = "casual"
+  RESEARCH_GRADE = "research"
+  QUALITY_GRADES = [CASUAL_GRADE, RESEARCH_GRADE]
+  
   LICENSES = [
     ["CC-BY", "Attribution", "This license lets others distribute, remix, tweak, and build upon your work, even commercially, as long as they credit you for the original creation. This is the most accommodating of licenses offered. Recommended for maximum dissemination and use of licensed materials."],
     ["CC-BY-NC", "Attribution-NonCommercial", "This license lets others remix, tweak, and build upon your work non-commercially, and although their new works must also acknowledge you and be non-commercial, they don’t have to license their derivative works on the same terms."],
@@ -634,7 +690,6 @@ class Observation < ActiveRecord::Base
       # If the owner doesn't have an identification for this obs, make one
       owners_ident = self.identifications.build(:user => user, :taxon => taxon, :observation => self)
       owners_ident.skip_observation = true
-      owners_ident.skip_update = true
     end
     
     update_stats(:skip_save => true)
@@ -673,7 +728,6 @@ class Observation < ActiveRecord::Base
     ProjectList.send_later(:refresh_with_observation, id, :taxon_id => taxon_id, 
       :taxon_id_was => taxon_id_was, :user_id => user_id, :created_at => created_at,
       :dj_priority => 1)
-    # ProjectList.send_later(:refresh_with_observation, id, :taxon_id => taxon_id, :skip_update => true)
     
     # Reset the instance var so it doesn't linger around
     @old_observation_taxon_id = nil
@@ -690,7 +744,6 @@ class Observation < ActiveRecord::Base
       :latitude_was  => (latitude_changed? || longitude_changed?) ? latitude_was : nil,
       :longitude_was => (latitude_changed? || longitude_changed?) ? longitude_was : nil,
       :new => id_was.blank?,
-      :skip_update => true,
       :dj_priority => 1)
     true
   end
@@ -907,7 +960,6 @@ class Observation < ActiveRecord::Base
     if observation.quality_grade_changed?
       CheckList.send_later(:refresh_with_observation, observation.id, 
         :taxon_id => observation.taxon_id, 
-        :skip_update => true,
         :dj_priority => 1)
     end
     observation.quality_grade
