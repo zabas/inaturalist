@@ -1,15 +1,4 @@
 class Observation < ActiveRecord::Base
-  has_subscribers :to => {
-    :comments => {:notification => "activity", :include_owner => true},
-    :identifications => {:notification => "activity", :include_owner => true}
-  }
-  notifies_subscribers_of :user, :notification => "created_observations"
-  notifies_subscribers_of :public_places, :notification => "new_observations", :if => lambda {|observation, place, subscription|
-    return true if subscription.taxon_id.blank?
-    return false if observation.taxon.blank?
-    observation.taxon.ancestor_ids.include?(subscription.taxon_id)
-  }
-  
   include Ambidextrous
   
   # Set to true if you want to skip the expensive updating of all the user's
