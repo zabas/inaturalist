@@ -9,8 +9,6 @@ class Observation < ActiveRecord::Base
     return false if observation.taxon.blank?
     observation.taxon.ancestor_ids.include?(subscription.taxon_id)
   }
-  acts_as_taggable
-  acts_as_flaggable
   
   include Ambidextrous
   
