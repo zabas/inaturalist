@@ -14,23 +14,7 @@ class Taxon < ActiveRecord::Base
   has_many :child_taxa, :class_name => Taxon.to_s, :foreign_key => :parent_id
   has_many :taxon_names, :dependent => :destroy
   has_many :observations, :dependent => :nullify
-  has_many :listed_taxa, :dependent => :destroy
-  has_many :lists, :through => :listed_taxa
-  has_many :places, :through => :listed_taxa
-  has_many :identifications, :dependent => :destroy
-  has_many :taxon_links, :dependent => :delete_all 
-  has_many :taxon_ranges, :dependent => :destroy
-  has_many :taxon_photos, :dependent => :destroy
-  has_many :photos, :through => :taxon_photos
-  belongs_to :source
-  belongs_to :iconic_taxon, :class_name => 'Taxon', :foreign_key => 'iconic_taxon_id'
-  belongs_to :creator, :class_name => 'User'
-  belongs_to :updater, :class_name => 'User'
-  belongs_to :conservation_status_source, :class_name => "Source"
-  has_and_belongs_to_many :colors
-  
-  accepts_nested_attributes_for :conservation_status_source
-  
+    
   define_index do
     indexes :name
     indexes taxon_names.name, :as => :names
