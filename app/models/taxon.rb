@@ -9,7 +9,6 @@ class Taxon < ActiveRecord::Base
   # Allow this taxon to be grafted to locked subtrees
   attr_accessor :skip_locks
   
-  acts_as_flaggable
   has_ancestry
   
   has_many :child_taxa, :class_name => Taxon.to_s, :foreign_key => :parent_id

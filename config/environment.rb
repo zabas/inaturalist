@@ -89,6 +89,7 @@ Rails::Initializer.run do |config|
   config.gem 'thinking-sphinx',
     :lib     => 'thinking_sphinx',
     :version => '< 2'
+  config.gem 'ancestry'
   config.gem 'delayed_paperclip'
   config.gem "preferences"
   
