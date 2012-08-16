@@ -24,10 +24,12 @@ class ObservationPhotosController < ApplicationController
       respond_to do |format|
         format.json do
           if params[:observation_photo] && params[:observation_photo][:observation_id]
-            render :json => "Observation hasn't been added to iNaturalist", 
+            Rails.logger.error "[ERROR #{Time.now}] Observation hasn't been added to iNaturalist"
+            render :json => {:errors => "Observation hasn't been added to iNaturalist"}, 
               :status => :unprocessable_entity
           else
-            render :json => "No observation specified", :status => :unprocessable_entity
+            Rails.logger.error "[ERROR #{Time.now}] No observation specified"
+            render :json => {:errors => "No observation specified"}, :status => :unprocessable_entity
           end
         end
       end
@@ -42,7 +44,7 @@ class ObservationPhotosController < ApplicationController
     unless @observation_photo.photo && @observation_photo.photo.valid?
       respond_to do |format|
         Rails.logger.error "[ERROR #{Time.now}] Failed to create observation photo, params: #{params.inspect}"
-        format.json { render :json => "No photo specified", :status => :unprocessable_entity }
+        format.json { render :json => {:errors => "No photo specified"}, :status => :unprocessable_entity }
       end
       return
     end
@@ -55,7 +57,8 @@ class ObservationPhotosController < ApplicationController
           render :json => @observation_photo.to_json(:include => [:photo])
         else
           Rails.logger.error "[ERROR #{Time.now}] Failed to create observation photo: #{@observation_photo.errors.full_messages.to_sentence}"
-          render :json => @observation_photo.errors, :status => :unprocessable_entity
+          render :json => {:errors => @observation_photo.errors.full_messages.to_sentence}, 
+            :status => :unprocessable_entity
         end
       end
     end
@@ -64,7 +67,8 @@ class ObservationPhotosController < ApplicationController
   def update
     unless @observation_photo = ObservationPhoto.find_by_id(params[:id])
       respond_to do |format|
-        format.json { render :json => "No photo specified", :status => :unprocessable_entity }
+        Rails.logger.error "[ERROR #{Time.now}] No photo specified"
+        format.json { render :json => {:errors => "No photo specified"}, :status => :unprocessable_entity }
       end
       return
     end
@@ -75,7 +79,10 @@ class ObservationPhotosController < ApplicationController
         format.json { render :json => @observation_photo.to_json(:include => [:photo]) }
       else
         Rails.logger.error "[ERROR #{Time.now}] Failed to update observation photo: #{@observation_photo.errors.full_messages.to_sentence}"
-        format.json {render :json => @observation_photo.errors, :status => :unprocessable_entity }
+        format.json do
+          render :json => {:errors => @observation_photo.errors.full_messages.to_sentence}, 
+            :status => :unprocessable_entity
+        end
       end
     end
   end
