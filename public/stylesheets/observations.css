@@ -810,3 +810,7 @@
 .observations .idandrg .research_grade_notice .full,
 .observations .idandrg .id_please_notice .full { display:none; }
 
+.no_dot {list-style-type: none;}
+.current_user {background-color:#DCEAA3; padding:.25em;}
+.current_user a {color: black;}
+.current_user span{color: white;}

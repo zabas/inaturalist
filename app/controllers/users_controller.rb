@@ -165,7 +165,23 @@ class UsersController < ApplicationController
       @most_species_year = most_species(:per => 'year')
       @most_identifications_year = most_identifications(:per => 'year')
     end
-
+    
+    if current_user
+      @current_user_observations = current_user_observations(:per => 'month')
+      @current_user_species = current_user_species(:per => 'month')
+      @current_user_identifications = current_user_identifications(:per => 'month')
+      @current_user_observations_year = current_user_observations(:per => 'year')
+      @current_user_species_year = current_user_species(:per => 'year')
+      @current_user_identifications_year = current_user_identifications(:per => 'year')
+      
+      @current_user_observations_leader = @most_observations.map{|user, count| user}.include? current_user
+      @current_user_species_leader = @most_species.map{|user, count| user}.include? current_user
+      @current_user_identifications_leader = @most_identifications.map{|user, count| user}.include? current_user
+      @current_user_observations_year_leader = @most_observations_year.map{|user, count| user}.include? current_user
+      @current_user_species_year_leader = @most_species_year.map{|user, count| user}.include? current_user
+      @current_user_identifications_year_leader = @most_identifications_year.map{|user, count| user}.include? current_user
+    end
+    
     @curators_key = "users_index_curators_#{I18n.locale}_#{SITE_NAME}_4"
     unless fragment_exist?(@curators_key)
       @curators = User.curators.limit(500)
@@ -197,6 +213,34 @@ class UsersController < ApplicationController
         @most_species = most_species(:per => 'month', :year => @year, :month => @month)
         @most_identifications = most_identifications(:per => 'month', :year => @year, :month => @month)
       end
+    end
+    
+    if current_user
+      if params[:month].blank?
+        @current_user_observations = current_user_observations(:per => 'year', :year => @year)
+        @current_user_species = current_user_species(:per => 'year', :year => @year)
+        @current_user_identifications = current_user_identifications(:per => 'year', :year => @year)
+        @current_user_observations_leader = @most_observations.map{|user, count| user}.include? current_user
+        @current_user_species_leader = @most_species.map{|user, count| user}.include? current_user
+        @current_user_identifications_leader = @most_identifications.map{|user, count| user}.include? current_user
+      else
+        @current_user_observations = current_user_observations(:per => 'month', :year => @year, :month => @month)
+        @current_user_species = current_user_species(:per => 'month', :year => @year, :month => @month)
+        @current_user_identifications = current_user_identifications(:per => 'month', :year => @year, :month => @month)
+        @current_user_observations_leader = @most_observations.map{|user, count| user}.include? current_user
+        @current_user_species_leader = @most_species.map{|user, count| user}.include? current_user
+        @current_user_identifications_leader = @most_identifications.map{|user, count| user}.include? current_user
+      end
+    end
+    
+    @curators_key = "users_index_curators_#{I18n.locale}_#{SITE_NAME}_4"
+    unless fragment_exist?(@curators_key)
+      @curators = User.curators.limit(500)
+      @curators = @curators.where("users.uri LIKE ?", "#{CONFIG.site_url}%") if CONFIG.site_only_users
+      @curators = @curators.reject(&:is_admin?)
+      @updated_taxa_counts = Taxon.where("updater_id IN (?)", @curators).group(:updater_id).count
+      @taxon_change_counts = TaxonChange.where("user_id IN (?)", @curators).group(:user_id).count
+      @resolved_flag_counts = Flag.where("resolver_id IN (?)", @curators).group(:resolver_id).count
     end
   end
 
@@ -533,7 +577,21 @@ protected
       memo
     end
   end
-
+  
+  def current_user_observations(options = {})
+    return true unless current_user
+    per = options[:per] || 'month'
+    year = options[:year] || Time.now.year
+    month = options[:month] || Time.now.month
+    scope = Observation.
+      where("user_id = ? AND EXTRACT(YEAR FROM observed_on) = ?", current_user, year).scoped
+    if per == 'month'
+      scope = scope.where("EXTRACT(MONTH FROM observed_on) = ?", month)
+    end
+    scope = scope.where("observations.uri LIKE ?", "#{CONFIG.site_url}%") if CONFIG.site_only_users
+    count = scope.count
+  end
+  
   def most_species(options = {})
     per = options[:per] || 'month'
     year = options[:year] || Time.now.year
@@ -569,7 +627,42 @@ protected
       memo
     end
   end
-
+  
+  def current_user_species(options = {})
+    return true unless current_user
+    per = options[:per] || 'month'
+    year = options[:year] || Time.now.year
+    month = options[:month] || Time.now.month
+    date_clause = "EXTRACT(YEAR FROM o.observed_on) = #{year}"
+    date_clause += "AND EXTRACT(MONTH FROM o.observed_on) = #{month}" if per == 'month'
+    site_clause = if CONFIG.site_only_users
+      "AND o.uri LIKE '#{CONFIG.site_url}%'"
+    end
+    sql = <<-SQL
+      SELECT
+        o.user_id,
+        count(*) AS count_all
+      FROM
+        (
+          SELECT DISTINCT o.taxon_id, o.user_id
+          FROM
+            observations o
+              JOIN taxa t ON o.taxon_id = t.id
+          WHERE
+            t.rank_level <= 10 AND
+            o.user_id = #{current_user.id} AND
+              #{date_clause}
+              #{site_clause}
+        ) as o
+        GROUP BY o.user_id
+        ORDER BY count_all desc
+        LIMIT 1
+    SQL
+    rows = ActiveRecord::Base.connection.execute(sql)
+    count = rows.map{|r| r['count_all']}.first
+    count ||= 0
+  end
+  
   def most_identifications(options = {})
     per = options[:per] || 'month'
     year = options[:year] || Time.now.year
@@ -591,5 +684,21 @@ protected
       memo
     end
   end
-    
+  
+  def current_user_identifications(options = {})
+    return true unless current_user
+    per = options[:per] || 'month'
+    year = options[:year] || Time.now.year
+    month = options[:month] || Time.now.month
+    scope = Identification.
+      joins(:observation, :user).
+      where("identifications.user_id = ? AND identifications.user_id != observations.user_id", current_user.id).
+      where("EXTRACT(YEAR FROM identifications.created_at) = ?", year).scoped
+    if per == 'month'
+      scope = scope.where("EXTRACT(MONTH FROM identifications.created_at) = ?", month)
+    end
+    scope = scope.where("users.uri LIKE ?", "#{CONFIG.site_url}%") if CONFIG.site_only_users
+    count = scope.count
+  end
+  
 end

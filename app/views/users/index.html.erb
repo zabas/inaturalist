@@ -101,7 +101,7 @@
     <% end -%>
   </div>
 
-  <% cache @leaderboard_key, :expires_in => 1.day do %>
+  <% cache @leaderboard_key, :expires_in => 1.second do %>
     <div id="leaderboard" class="stacked column span-24">
       <h3>
         <div class="right small meta ui">
@@ -121,13 +121,26 @@
           :data => @most_identifications, 
           :last => true,
           :sub => Proc.new {|user, count| link_to("<span class='count'>#{count}</span> #{count == 1 ? t(:identification).downcase : t(:identifications).downcase}".html_safe, observations_by_login_path(user.login, :on => Time.now.strftime("%Y-%m")))} %>
+        <% if current_user %>
+          <div class="column span-24 stacked">
+            <%= render 'current_user_column', :noun => 'observation', :noun_plural => 'observations', :time_unit => 'month', :data => @current_user_observations_leader ? nil : @current_user_observations %>
+            <%= render 'current_user_column', :noun => 'species', :noun_plural => 'species', :time_unit => 'month', :data => @current_user_species_leader ? nil : @current_user_species %>
+            <%= render 'current_user_column',
+              :noun => 'identification',
+              :noun_plural => 'identifications',
+              :time_unit => 'month',
+              :data => @current_user_identifications_leader ? nil : @current_user_identifications,
+              :last => true,
+              :sub => Proc.new {|user, count| link_to("<span class='count'>#{count}</span> #{count == 1 ? t(:identification).downcase : t(:identifications).downcase}".html_safe, observations_by_login_path(user.login, :on => Time.now.strftime("%Y-%m")))} %>
+          </div>  
+        <% end %>
         <div class="column span-24">
           <div class='meta'><%=raw t :observations_observed_this_month %></div>
           <%- prev_date = Date.today - 1.month -%>
           <%= link_to t(:view_leaderboard_from_last_month), leaderboard_for_people_path(:year => prev_date.year, :month => prev_date.month), :class => "readmore" %>
         </div>
       </div>
-
+      
       <div class="column span-24">
         <%= render 'leaderboard_column', :noun => 'observation', :noun_plural => 'observations', :time_unit => 'year', :data => @most_observations_year %>
         <%= render 'leaderboard_column', :noun => 'species', :noun_plural => 'species', :time_unit => 'year', :data => @most_species_year %>
@@ -138,6 +151,19 @@
           :data => @most_identifications_year, 
           :last => true,
           :sub => Proc.new {|user, count| link_to("<span class='count'>#{count}</span> #{count == 1 ? t(:identification).downcase : t(:identifications).downcase}".html_safe, observations_by_login_path(user.login, :on => Time.now.strftime("%Y-%m")))} %>
+        <% if current_user %>
+          <div class="column span-24 stacked">
+            <%= render 'current_user_column', :noun => 'observation', :noun_plural => 'observations', :time_unit => 'year', :data => @current_user_observations_year_leader ? nil : @current_user_observations_year %>
+            <%= render 'current_user_column', :noun => 'species', :noun_plural => 'species', :time_unit => 'year', :data => @current_user_year_species_leader ? nil : @current_user_species_year %>
+            <%= render 'current_user_column',
+              :noun => 'identification',
+              :noun_plural => 'identifications',
+              :time_unit => 'year',
+              :data => @current_user_identifications_year_leader ? nil : @current_user_identifications_year,
+              :last => true,
+              :sub => Proc.new {|user, count| link_to("<span class='count'>#{count}</span> #{count == 1 ? t(:identification).downcase : t(:identifications).downcase}".html_safe, observations_by_login_path(user.login, :on => Time.now.strftime("%Y-%m")))} %>
+          </div>
+        <% end %> 
         <div class="column span-24">
           <%- prev_date = Date.today - 1.year -%>
           <%= link_to t(:view_leaderboard_from_last_year), leaderboard_for_people_path(:year => prev_date.year), :class => "readmore" %>

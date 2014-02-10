@@ -1,0 +1,20 @@
+- extra ||= nil
+- span ||= 8
+- last ||= false
+- sub ||= nil
+- date ||= @date || Date.today
+%div{:class => "column span-#{span} #{'last' if last}"}
+  %ul{:class => "no_dot"}
+    - if !data.blank?
+      %li{:class => "current_user"}
+        = image_and_content user_image(current_user, :size => 'thumb') do
+          %div
+            = link_to_user current_user, :class => "large"
+          - if sub
+            = sub.call(current_user, data)
+          - else
+            = link_to observations_by_login_path(current_user.login, :on => time_unit == 'month' ? date.strftime("%Y-%m") : date.year) do
+              =t "x_#{noun.camelize.parameterize.pluralize}_html", :count => data.to_i
+    -else
+      .nocontent.meta=''
+  = extra

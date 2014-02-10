@@ -16,7 +16,7 @@
   %ol
     - if !data.blank?
       - for user, count in data
-        %li.stacked
+        %li.stacked{:class => "#{'current_user' if user == current_user}"}
           = image_and_content user_image(user, :size => 'thumb') do
             %div
               = link_to_user user, :class => "large"
