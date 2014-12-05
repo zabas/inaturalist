@@ -928,13 +928,6 @@ class ObservationsController < ApplicationController
         next if taxon_name_str.strip.blank?
         latitude = params[:batch][:latitude]
         longitude = params[:batch][:longitude]
-        if latitude.nil? && longitude.nil? && params[:batch][:place_guess]
-          places = Ym4r::GmPlugin::Geocoding.get(params[:batch][:place_guess])
-          unless places.empty?
-            latitude = places.first.latitude
-            longitude = places.first.longitude
-          end
-        end
         @observations << Observation.new(
           :user => current_user,
           :species_guess => taxon_name_str,
@@ -1263,8 +1256,10 @@ class ObservationsController < ApplicationController
       search_observations(search_params, find_options)
     end
     
-    @top_identifiers = User.all(:order => "identifications_count DESC", 
-      :limit => 5)
+    @top_identifiers = User.order("identifications_count DESC").limit(5)
+    if @site && @site.site_only_users
+      @top_identifiers = @top_identifiers.where(:site_id => @site)
+    end
   end
   
   # Renders observation components as form fields for inclusion in 
@@ -1527,8 +1522,14 @@ class ObservationsController < ApplicationController
     o = { :observation_field_values_attributes =>  ofv_attrs}
     respond_to do |format|
       if @observation.update_attributes(o)
+        if !params[:project_id].blank? && @observation.user_id == current_user.id && (@project = Project.find(params[:project_id]) rescue nil)
+          @project_observation = ProjectObservation.create(:observation => @observation, :project => @project)
+        end
         format.html do
           flash[:notice] = I18n.t(:observations_was_successfully_updated)
+          if @project_observation && !@project_observation.valid?
+            flash[:notice] += I18n.t(:however_there_were_some_issues, :issues => @project_observation.errors.full_messages.to_sentence)
+          end
           redirect_to @observation
         end
         format.json do
@@ -1573,6 +1574,7 @@ class ObservationsController < ApplicationController
           o.send("#{k}=", v) unless v.blank?
         end
       end
+      o.site ||= @site || current_user.site
       if o.save
         @observations << o
       else
@@ -1930,6 +1932,7 @@ class ObservationsController < ApplicationController
 
   def map
     @taxon = Taxon.find_by_id(params[:taxon_id].to_i) if params[:taxon_id]
+    @user = User.find_by_id(params[:user_id].to_i) if params[:user_id]
     @taxon_hash = { }
     if @taxon
       common_name = view_context.common_taxon_name(@taxon).try(:name)
@@ -1942,6 +1945,8 @@ class ObservationsController < ApplicationController
         @taxon_hash[:iconic_taxon_name] = @taxon.iconic_taxon.name
       end
     end
+    @about_url = CONFIG.map_about_url ? CONFIG.map_about_url :
+      view_context.wiki_page_url('help', anchor: 'mapsymbols')
   end
 
 ## Protected / private actions ###############################################

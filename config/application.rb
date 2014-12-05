@@ -71,7 +71,7 @@ module Inaturalist
     config.assets.enabled = true
 
     # Version of your assets, change this if you want to expire all your assets
-    config.assets.version = '1.0'
+    config.assets.version = '1.1'
 
     # Compile localized CSS:
     config.assets.precompile += ['*.css', '*.js']
@@ -105,9 +105,6 @@ FlickRaw.ca_path = "/etc/ssl/certs" if File.exists?("/etc/ssl/certs")
 SITE_NAME = CONFIG.site_name
 SITE_NAME_SHORT = CONFIG.site_name_short || SITE_NAME
 OBSERVATIONS_TILE_SERVER = CONFIG.tile_servers.observations
-
-# apparently we still need this for static maps
-#Ym4r::GmPlugin::ApiKey.key = YAML.load_file("#{::Rails.root}/config/gmaps_api_key.yml")[Rails.env]
 
 # force encoding
 Encoding.default_internal = Encoding::UTF_8
