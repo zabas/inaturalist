@@ -747,19 +747,68 @@ var appendValidParamsToURL = function( url, options ) {
 };
 
 google.maps.Map.prototype.addPlaceLayer = function( options ) {
-  _.defaults( options, { validParams: [ 'color' ] });
-  return this.addLayerByEndpoint( "places", options.place.id, options );
+  this.data.loadGeoJson('/places/geometry/' + options.place.id + '.geojson');
 };
 
 google.maps.Map.prototype.addTaxonRangeLayer = function( options ) {
-  _.defaults( options, { validParams: [ 'color' ] });
-  return this.addLayerByEndpoint( "taxon_ranges", options.taxon.id, options );
+  this.data.loadGeoJson('/taxa/' + options.taxon.id + '/range.geojson');
 };
 
 google.maps.Map.prototype.addTaxonPlacesLayer = function( options ) {
-  _.defaults( options, { validParams: [ 'confirmed_color', 'unconfirmed_color' ] });
-  return this.addLayerByEndpoint( "taxon_places", options.taxon.id, options );
+  this.data.loadGeoJson('/taxa/' + options.taxon.id + '/places.geojson');
+  this.addDataLayerEvents( );
 };
+
+google.maps.Map.prototype.addDataLayerEvents = function( ) {
+  // making the overlayLayer with our map tiles sit on top of everything
+  var m = this;
+  var DummyOverlay = function(m) { };
+  DummyOverlay.prototype = new google.maps.OverlayView();
+  DummyOverlay.prototype.draw = function() {
+   var self = this;
+   if(!m.getMapPanes) {
+     m.getMapPanes = function() {
+        return self.getPanes();
+     };
+   }
+   m.getMapPanes().mapPane.style["z-index"] = "1000"
+  };
+  //add the dummy overlay to the map so it's draw method is called
+  ( new DummyOverlay( ) ).setMap(m);
+
+  google.maps.event.addListener(this, "zoom_changed", function( ) {
+    map.data.setStyle( function( feature ) {
+      var visible = true;
+      var color = "#DAA520";
+      var fillOpacity = 0.2;
+      var strokeOpacity = 0.7;
+      var zIndex = 0;
+      var strokeWeight = 1;
+      if( feature.getProperty("place_type") === "listed_taxon") {
+        if( feature.getProperty("last_observation_id") ) {
+          color = "#73AC13";
+        }
+        if( feature.getProperty("occurrence_status_level") == 10 ) {
+          color = "#2E2E2E";
+        }
+        if(( feature.getProperty("max_zoom") && feature.getProperty("max_zoom") < map.getZoom( )) ||
+           ( feature.getProperty("min_zoom") && feature.getProperty("min_zoom") > map.getZoom( )) ) {
+          visible = false;
+        }
+      } else if( feature.getProperty("place_type") === "taxon_range") {
+        color = "#FF5EB0";
+        fillOpacity = 0.4;
+        strokeOpacity = 0.7;
+        zIndex = 1;
+        strokeWeight = 1.5;
+      }
+      return { visible: visible, fillOpacity: fillOpacity, strokeOpacity: strokeOpacity,
+        fillColor: color, strokeColor: color,
+        strokeWeight: strokeWeight, clickable: false, "z-index": zIndex };
+    });
+  });
+}
+
 
 var cachedGBIFColors;
 var GBIFMapColors = function( ) {

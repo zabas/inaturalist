@@ -1295,6 +1295,29 @@ class Taxon < ActiveRecord::Base
     nil
   end
 
+  def places_geojson
+    {
+      type: "FeatureCollection",
+      features: places.where("admin_level IN (0,1,2,3)").
+        includes(:place_geometry).map{ |p|
+          if
+            place_geojson = p.to_geojson
+            place_geojson[:properties][:place_type] = "listed_taxon"
+            if m = listed_taxa.where(place_id: p.id).maximum(:last_observation_id)
+              place_geojson[:properties][:last_observation_id] = m
+            end
+            if m = listed_taxa.where(place_id: p.id).maximum(:occurrence_status_level)
+              place_geojson[:properties][:occurrence_status_level] = m
+            end
+            if m = listed_taxa.where(place_id: p.id).maximum(:establishment_means)
+              place_geojson[:properties][:observed] = m
+            end
+            place_geojson
+          end
+        }.compact
+    }
+  end
+
   # Static ##################################################################
 
   def self.match_descendants_of_id(id, taxon_hash)

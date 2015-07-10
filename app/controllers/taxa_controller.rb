@@ -1,6 +1,7 @@
 #encoding: utf-8
 class TaxaController < ApplicationController
-  caches_page :range, :if => Proc.new {|c| c.request.format == :geojson}
+  caches_page :range, :if => Proc.new { |c| c.request.format == :geojson }
+  caches_page :places, :if => Proc.new { |c| c.request.format == :geojson }
   caches_action :show, :expires_in => 1.day, :cache_path => {:locale => I18n.locale},
     :if => Proc.new {|c|
       c.session.blank? || c.session['warden.user.user.key'].blank?
@@ -25,7 +26,7 @@ class TaxaController < ApplicationController
   before_filter :load_taxon, :only => [:edit, :update, :destroy, :photos, 
     :children, :graft, :describe, :edit_photos, :update_photos, :edit_colors,
     :update_colors, :add_places, :refresh_wikipedia_summary, :merge, 
-    :range, :schemes, :tip]
+    :range, :schemes, :tip, :places ]
   before_filter :limit_page_param_for_search, :only => [:index,
     :browse, :search]
   before_filter :ensure_flickr_write_permission, :only => [
@@ -653,15 +654,10 @@ class TaxaController < ApplicationController
     else
       @taxon.taxon_ranges.first
     end
-    unless @taxon_range
-      flash[:error] = t(:taxon_doesnt_have_a_range)
-      redirect_to @taxon
-      return
-    end
     respond_to do |format|
       format.html { redirect_to taxon_map_path(@taxon) }
       format.kml { redirect_to @taxon_range.range.url }
-      format.geojson { render :json => [@taxon_range].to_geojson }
+      format.geojson { render json: @taxon_range ? @taxon_range.to_geojson : { type: "Feature" } }
     end
   end
   
@@ -753,7 +749,15 @@ class TaxaController < ApplicationController
     end
     render :layout => false
   end
-  
+
+  def places
+    respond_to do |format|
+      format.geojson do
+        render json: @taxon.places_geojson
+      end
+    end
+  end
+
   private
   def add_places_from_paste
     place_names = params[:paste_places].split(",").map{|p| p.strip.downcase}.reject(&:blank?)

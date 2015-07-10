@@ -102,4 +102,13 @@ class TaxonRange < ActiveRecord::Base
     }
   end
 
+  def to_geojson
+    return unless geom
+    {
+      type: "Feature",
+      properties: { id: id, taxon_id: taxon_id, place_type: "taxon_range" },
+      geometry: ElasticModel.geom_geojson(geom)
+    }
+  end
+
 end

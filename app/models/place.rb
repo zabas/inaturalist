@@ -841,4 +841,26 @@ class Place < ActiveRecord::Base
     end
   end
 
+  def zooms_for_admin_level
+    case admin_level
+    when 0
+      { max_zoom: 3 }
+    when 1
+      { min_zoom: 4, max_zoom: 5 }
+    when 2
+      { min_zoom: 6, max_zoom: 10 }
+    when 3
+      { min_zoom: 11, }
+    end
+  end
+
+  def to_geojson
+    return unless place_geometry && place_geometry.geom
+    {
+      type: "Feature",
+      properties: zooms_for_admin_level.merge(place_type: "place"),
+      geometry: ElasticModel.geom_geojson(place_geometry.geom)
+    }
+  end
+
 end

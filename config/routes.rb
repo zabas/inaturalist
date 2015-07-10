@@ -324,6 +324,7 @@ Rails.application.routes.draw do
       get 'schemes', :as => "schemes_for", :constraints => {:format => [:html, :mobile]}
       get 'tip'
       get 'names', :to => 'taxon_names#taxon'
+      get "places", constraints: { format: :geojson }
     end
     collection do
       get 'tree'

@@ -725,6 +725,7 @@ class ListedTaxon < ActiveRecord::Base
       ctrl.expire_fragment(guide_taxon_cache_key)
       ctrl.expire_page(FakeView.url_for(:controller => 'places', :action => 'cached_guide', :id => place_id))
       ctrl.expire_page(FakeView.url_for(:controller => 'places', :action => 'cached_guide', :id => place.slug)) if place
+      ctrl.expire_page FakeView.places_taxon_path(taxon_id, format: "geojson")
     end
     if list
       ctrl.expire_page FakeView.list_path(list_id, :format => 'csv')
